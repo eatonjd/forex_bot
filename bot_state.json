@@ -1,0 +1,24 @@
+{
+  "version": "1.1.0",
+  "commit": "enhanced-reasoning",
+  "status": "Running",
+  "iteration": 656,
+  "last_update": "2025-12-20T13:17:57.530934",
+  "positions": [],
+  "total_pnl_pips": 0.0,
+  "total_pnl_usd": 0.0,
+  "trades": 0,
+  "wins": 0,
+  "losses": 0,
+  "symbols": [
+    "EUR_USD",
+    "GBP_USD",
+    "USD_JPY",
+    "AUD_USD",
+    "USD_CAD"
+  ],
+  "hold_reasons": {
+    "Neutral market": 1170,
+    "Wide spread": 178
+  }
+}

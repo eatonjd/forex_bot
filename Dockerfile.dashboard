@@ -1,0 +1,27 @@
+# Dashboard Dockerfile for Cloud Run
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy dashboard files
+COPY dashboard.py .
+COPY dashboard_server.py .
+COPY utils/ utils/
+COPY version.py .
+
+# Create empty bot_state.json as fallback
+RUN echo '{}' > bot_state.json
+
+# Expose port 8080 (Cloud Run requirement)
+EXPOSE 8080
+
+# Set environment variables
+ENV USE_CLOUD_STORAGE=true
+ENV GCS_BUCKET_NAME=forex-bot-state
+
+# Run dashboard server
+CMD ["python", "dashboard_server.py"]

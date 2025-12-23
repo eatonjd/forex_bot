@@ -1,0 +1,25 @@
+# Forex Bot - Production Requirements
+# For Google Cloud Run deployment
+
+# Core dependencies
+numpy>=1.24.0,<2.0.0
+pandas>=2.0.0,<3.0.0
+
+# Machine Learning
+stable-baselines3>=2.0.0
+gymnasium>=0.28.0
+torch>=2.0.0
+
+# OANDA Trading
+oandapyV20>=0.7.0
+
+# Utilities
+python-dotenv>=1.0.0
+yfinance>=0.2.0
+
+# Production web server (for health checks)
+flask>=3.0.0
+gunicorn>=21.0.0
+streamlit>=1.29.0
+requests>=2.31.0
+google-cloud-storage>=2.10.0

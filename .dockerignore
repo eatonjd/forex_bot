@@ -1,0 +1,35 @@
+# Ignore these when building Docker image
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+# env/  # REMOVED - this is our trading_env module, not a virtualenv!
+*.egg-info
+.eggs
+*.log
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Keep models - they're needed for trading
+# models/
+
+# Ignore test files
+*_test.py
+test_*.py
+
+# Ignore development files
+*.md
+!README.md
+plots/
+logs/
+tuning_results*.csv
+
+# Ignore local env files (we'll set these in GCP)
+# .env is needed but we'll set secrets differently
