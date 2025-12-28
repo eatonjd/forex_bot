@@ -16,6 +16,8 @@ app = Flask(__name__)
 bot_status = {
     "running": True,
     "last_check": time.time(),
+    "last_heartbeat": None,
+    "iteration": 0,
     "trades": 0,
     "errors": 0,
     "initialization": {
@@ -27,7 +29,6 @@ bot_status = {
         "trading_loop_started": False,
         "completed": False,
         "error": None,
-        "last_iteration": None,
     },
 }
 
@@ -51,6 +52,13 @@ def health_check():
 
     init = bot_status["initialization"]
 
+    # Check for heartbeat timeout (e.g., 20 minutes)
+    heartbeat_alive = True
+    if bot_status["last_heartbeat"]:
+        time_since_last = time.time() - bot_status["last_heartbeat"]
+        if time_since_last > 1200:  # 20 minutes
+            heartbeat_alive = False
+
     # Determine overall health status
     if init["error"]:
         status = "unhealthy"
@@ -60,6 +68,9 @@ def health_check():
         http_code = 503
     elif not init["completed"]:
         status = "initializing"
+        http_code = 503
+    elif not heartbeat_alive:
+        status = "stalled"
         http_code = 503
     elif init["completed"] and bot_status["running"]:
         status = "healthy"
@@ -82,7 +93,8 @@ def health_check():
             "initialized": init["completed"],
             "running": bot_status["running"],
             "uptime_seconds": uptime_seconds,
-            "last_iteration": init["last_iteration"],
+            "iteration": bot_status["iteration"],
+            "last_heartbeat": bot_status["last_heartbeat"],
             "total_errors": bot_status["errors"],
         },
         "initialization_stages": {
@@ -163,40 +175,24 @@ def run_trading_bot():
 
     try:
         # Import and run bot
+        print("📦 Importing PaperTradingBot...", flush=True)
         from paper_trading_bot import PaperTradingBot
 
-        # Note: PaperTradingBot will update bot_status during initialization
-        # We need to pass bot_status to it or use a shared state mechanism
+        print("🏗️  Instantiating PaperTradingBot...", flush=True)
+        # Pass the bot_status dictionary for internal tracking
+        bot = PaperTradingBot(status_tracker=bot_status)
 
-        bot = PaperTradingBot()
-
-        # Mark as completed (bot's __init__ should have updated intermediate stages)
-        bot_status["initialization"]["completed"] = True
+        # Mark as loop started
         bot_status["initialization"]["trading_loop_started"] = True
 
         print("✅ Bot initialized, starting trading loop...", flush=True)
 
-        # Override bot's run() to update iteration timestamp
-        original_run = bot.run
-
-        def run_with_tracking():
-            try:
-                original_run()
-            except KeyboardInterrupt:
-                print("\n\n🛑 Stopping paper trading bot...", flush=True)
-            finally:
-                bot_status["running"] = False
-
-        # Wrap iteration to track timestamp
-        original_check_symbol = bot.check_symbol
-
-        def check_symbol_with_tracking(instrument):
-            bot_status["initialization"]["last_iteration"] = datetime.now().isoformat()
-            return original_check_symbol(instrument)
-
-        bot.check_symbol = check_symbol_with_tracking
-
-        run_with_tracking()
+        try:
+            bot.run()
+        except KeyboardInterrupt:
+            print("\n\n🛑 Stopping paper trading bot...", flush=True)
+        finally:
+            bot_status["running"] = False
 
     except Exception as e:
         print(f"❌ Bot error: {e}", flush=True)

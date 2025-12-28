@@ -1,0 +1,18 @@
+
+============================================================
+📊 DAILY PERFORMANCE SUMMARY - 2025-12-24
+============================================================
+
+Trading Activity:
+  • Iterations: 893
+  • Trades Executed: 0
+  • Win Rate: 0.0% (0 wins, 0 losses)
+
+Performance:
+  • Total P&L: +0.0 pips ($+0.00)
+
+Reasons for Not Trading:
+  • Neutral market: 86.7%
+  • Wide spread: 13.3%
+
+============================================================

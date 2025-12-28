@@ -1,103 +1,47 @@
 #!/usr/bin/env python3
 """
-Gemini Market Analyzer
+Ollama Market Analyzer
 
-Text-based AI analysis using Google's Gemini API for Smart Money Concepts
-and Wyckoff pattern detection. Simplified version without chart images.
+Local LLM-based market analysis using Ollama for Smart Money Concepts
+and Wyckoff pattern detection. Zero API cost alternative to Gemini.
 
 Features:
-- Text-only analysis (no image uploads, faster, cheaper)
-- SMC/Wyckoff pattern recognition
-- Multi-timeframe analysis
-- Trading signal generation
-- Integration with Multi-Symbol Scanner
+- Local inference (no API costs)
+- Same interface as GeminiMarketAnalyzer
+- Rate limiting and caching
+- Works with Mistral, Llama, Phi-3, etc.
 
 Author: Forex Bot Team
-Created: 2025-12-18
+Created: 2025-12-27
 """
 
 import os
 import time
 import logging
-from typing import Dict, List, Optional
+import json
+from typing import Dict, Optional
 from datetime import datetime
 
 try:
-    import google.generativeai as genai
+    import requests
 
-    GEMINI_AVAILABLE = True
+    REQUESTS_AVAILABLE = True
 except ImportError:
-    GEMINI_AVAILABLE = False
-    logging.warning("google-generativeai not installed. Gemini features disabled.")
+    REQUESTS_AVAILABLE = False
+    logging.warning("requests not installed. Ollama features disabled.")
 
 logger = logging.getLogger(__name__)
 
 
-class GeminiMarketAnalyzer:
+class OllamaMarketAnalyzer:
     """
-    AI-powered market analysis using Google Gemini.
+    Local LLM-powered market analysis using Ollama.
 
     Analyzes price data and provides trading signals based on
     Smart Money Concepts and Wyckoff methodology.
     """
 
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        model_name: str = "gemini-2.0-flash",
-        temperature: float = 0.7,
-        rate_limit_seconds: int = 3600,
-    ):
-        """
-        Initialize Gemini Market Analyzer.
-
-        Args:
-            api_key: Google Gemini API key (or use GOOGLE_API_KEY env var)
-            model_name: Model to use (gemini-2.0-flash or gemini-2.0-pro)
-            temperature: Response creativity (0.0-2.0, lower = more deterministic)
-            rate_limit_seconds: Minimum seconds between API calls per symbol
-        """
-        # Rate limiting
-        self.rate_limit_seconds = rate_limit_seconds
-        self._last_call_times: Dict[str, float] = {}  # symbol -> timestamp
-        self._cached_results: Dict[str, Dict] = {}  # symbol -> last result
-
-        if not GEMINI_AVAILABLE:
-            logger.error("google-generativeai not installed")
-            self.enabled = False
-            return
-
-        # Get API key
-        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
-        if not self.api_key:
-            logger.error("No Gemini API key provided")
-            self.enabled = False
-            return
-
-        # Configure Gemini
-        genai.configure(api_key=self.api_key)
-
-        # Create model
-        self.model_name = model_name
-        self.model = self._create_model(temperature)
-        self.enabled = True
-
-        logger.info(
-            f"GeminiMarketAnalyzer initialized with {model_name} (rate limit: {rate_limit_seconds}s)"
-        )
-
-    def _create_model(self, temperature: float):
-        """Create Gemini model with configuration"""
-
-        generation_config = {
-            "temperature": temperature,
-            "top_p": 0.95,
-            "top_k": 40,
-            "max_output_tokens": 2048,
-            "response_mime_type": "text/plain",
-        }
-
-        system_instruction = """You are an expert forex trader specializing in Smart Money Concepts (SMC) and Wyckoff methodology.
+    SYSTEM_PROMPT = """You are an expert forex trader specializing in Smart Money Concepts (SMC) and Wyckoff methodology.
 
 Your task: Analyze price data and provide SHORT, ACTIONABLE trading signals.
 
@@ -107,7 +51,7 @@ ANALYSIS FRAMEWORK:
 3. Apply Wyckoff events (Springs, Upthrusts, Tests)
 4. Determine bias (BULLISH/BEARISH/NEUTRAL)
 
-OUTPUT FORMAT:
+OUTPUT FORMAT (use exactly this format):
 BIAS: [BULLISH/BEARISH/NEUTRAL]
 CONFIDENCE: [0-100]%
 SIGNAL: [BUY/SELL/HOLD]
@@ -118,19 +62,73 @@ REASONING: [2-3 sentences maximum]
 
 Keep responses CONCISE. No lengthy explanations."""
 
-        return genai.GenerativeModel(
-            model_name=self.model_name,
-            generation_config=generation_config,
-            system_instruction=system_instruction,
-        )
+    def __init__(
+        self,
+        model: str = "mistral:7b",
+        host: str = "http://localhost:11434",
+        timeout: int = 30,
+        temperature: float = 0.7,
+        rate_limit_seconds: int = 3600,
+    ):
+        """
+        Initialize Ollama Market Analyzer.
+
+        Args:
+            model: Ollama model name (e.g., mistral:7b, llama3:8b)
+            host: Ollama server URL
+            timeout: Request timeout in seconds
+            temperature: Response creativity (0.0-2.0)
+            rate_limit_seconds: Minimum seconds between API calls per symbol
+        """
+        # Rate limiting
+        self.rate_limit_seconds = rate_limit_seconds
+        self._last_call_times: Dict[str, float] = {}
+        self._cached_results: Dict[str, Dict] = {}
+
+        if not REQUESTS_AVAILABLE:
+            logger.error("requests library not installed")
+            self.enabled = False
+            return
+
+        self.model = model
+        self.host = host.rstrip("/")
+        self.timeout = timeout
+        self.temperature = temperature
+
+        # Check if Ollama is running
+        self.enabled = self._check_connection()
+
+        if self.enabled:
+            logger.info(
+                f"OllamaMarketAnalyzer initialized with {model} (rate limit: {rate_limit_seconds}s)"
+            )
+        else:
+            logger.warning("Ollama server not available")
+
+    def _check_connection(self) -> bool:
+        """Check if Ollama server is running and model is available."""
+        try:
+            response = requests.get(f"{self.host}/api/tags", timeout=5)
+            if response.status_code == 200:
+                models = response.json().get("models", [])
+                model_names = [m.get("name", "") for m in models]
+
+                # Check if our model is available
+                if any(self.model in name for name in model_names):
+                    return True
+                else:
+                    logger.warning(
+                        f"Model {self.model} not found. Available: {model_names}"
+                    )
+                    # Still return True - model might be pulled on first use
+                    return True
+            return False
+        except Exception as e:
+            logger.debug(f"Ollama connection check failed: {e}")
+            return False
 
     def can_analyze(self, symbol: str) -> bool:
-        """
-        Check if we can analyze this symbol (rate limit check).
-
-        Returns:
-            True if enough time has passed since last call for this symbol
-        """
+        """Check if we can analyze this symbol (rate limit check)."""
         if symbol not in self._last_call_times:
             return True
 
@@ -138,21 +136,11 @@ Keep responses CONCISE. No lengthy explanations."""
         return elapsed >= self.rate_limit_seconds
 
     def get_cached_result(self, symbol: str) -> Optional[Dict]:
-        """
-        Get cached result for a symbol if available.
-
-        Returns:
-            Cached analysis result or None
-        """
+        """Get cached result for a symbol if available."""
         return self._cached_results.get(symbol)
 
     def seconds_until_available(self, symbol: str) -> int:
-        """
-        Get seconds until we can analyze this symbol again.
-
-        Returns:
-            Seconds remaining, or 0 if available now
-        """
+        """Get seconds until we can analyze this symbol again."""
         if symbol not in self._last_call_times:
             return 0
 
@@ -169,13 +157,6 @@ Keep responses CONCISE. No lengthy explanations."""
         Args:
             symbol: Trading pair (e.g., "EURUSD")
             price_data: Dict with OHLCV data
-                {
-                    'open': [float],
-                    'high': [float],
-                    'low': [float],
-                    'close': [float],
-                    'volume': [float]
-                }
             timeframe: Timeframe being analyzed
             force: If True, bypass rate limiting
 
@@ -203,19 +184,21 @@ Keep responses CONCISE. No lengthy explanations."""
             # Prepare prompt
             prompt = self._create_analysis_prompt(symbol, price_data, timeframe)
 
-            # Get analysis from Gemini
-            response = self.model.generate_content(prompt)
+            # Get analysis from Ollama
+            response = self._generate(prompt)
 
             # Parse response
-            analysis = self._parse_response(response.text, symbol)
+            analysis = self._parse_response(response, symbol)
             analysis["from_cache"] = False
+            analysis["provider"] = "ollama"
+            analysis["model"] = self.model
 
             # Update rate limit tracking
             self._last_call_times[symbol] = time.time()
             self._cached_results[symbol] = analysis
 
             logger.info(
-                f"Gemini analyzed {symbol}: {analysis['signal']} "
+                f"Ollama analyzed {symbol}: {analysis['signal']} "
                 f"(confidence: {analysis['confidence']}%)"
             )
 
@@ -225,11 +208,31 @@ Keep responses CONCISE. No lengthy explanations."""
             logger.error(f"Error analyzing {symbol}: {e}")
             return self._get_error_response(symbol, str(e))
 
+    def _generate(self, prompt: str) -> str:
+        """Generate response from Ollama."""
+        url = f"{self.host}/api/generate"
+
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "system": self.SYSTEM_PROMPT,
+            "stream": False,
+            "options": {
+                "temperature": self.temperature,
+                "num_predict": 500,  # Limit output tokens
+            },
+        }
+
+        response = requests.post(url, json=payload, timeout=self.timeout)
+        response.raise_for_status()
+
+        result = response.json()
+        return result.get("response", "")
+
     def _create_analysis_prompt(
         self, symbol: str, price_data: Dict, timeframe: str
     ) -> str:
-        """Create analysis prompt from price data"""
-
+        """Create analysis prompt from price data."""
         # Get recent candles (last 20)
         recent_candles = []
         n_candles = min(20, len(price_data.get("close", [])))
@@ -258,7 +261,7 @@ CURRENT DATA:
 - 20-Period High: {high_20:.5f}
 - 20-Period Low: {low_20:.5f}
 
-RECENT PRICE ACTION (last {n_candles} candles):
+RECENT PRICE ACTION (last {min(10, n_candles)} candles):
 """
 
         # Add recent candles
@@ -271,8 +274,7 @@ RECENT PRICE ACTION (last {n_candles} candles):
         return prompt
 
     def _parse_response(self, response_text: str, symbol: str) -> Dict:
-        """Parse Gemini response into structured format"""
-
+        """Parse Ollama response into structured format."""
         # Default values
         analysis = {
             "symbol": symbol,
@@ -299,24 +301,24 @@ RECENT PRICE ACTION (last {n_candles} candles):
                 try:
                     conf_str = line.split(":", 1)[1].strip().rstrip("%")
                     analysis["confidence"] = int(conf_str)
-                except:
+                except ValueError:
                     pass
             elif line.startswith("SIGNAL:"):
                 analysis["signal"] = line.split(":", 1)[1].strip().upper()
             elif line.startswith("ENTRY:"):
                 try:
                     analysis["entry"] = float(line.split(":", 1)[1].strip())
-                except:
+                except ValueError:
                     pass
             elif line.startswith("STOP_LOSS:") or line.startswith("STOP LOSS:"):
                 try:
                     analysis["stop_loss"] = float(line.split(":", 1)[1].strip())
-                except:
+                except ValueError:
                     pass
             elif line.startswith("TAKE_PROFIT:") or line.startswith("TAKE PROFIT:"):
                 try:
                     analysis["take_profit"] = float(line.split(":", 1)[1].strip())
-                except:
+                except ValueError:
                     pass
             elif line.startswith("REASONING:"):
                 analysis["reasoning"] = line.split(":", 1)[1].strip()
@@ -324,7 +326,7 @@ RECENT PRICE ACTION (last {n_candles} candles):
         return analysis
 
     def _get_disabled_response(self) -> Dict:
-        """Return response when Gemini is disabled"""
+        """Return response when Ollama is disabled."""
         return {
             "symbol": "UNKNOWN",
             "timestamp": datetime.now().isoformat(),
@@ -334,12 +336,13 @@ RECENT PRICE ACTION (last {n_candles} candles):
             "entry": 0.0,
             "stop_loss": 0.0,
             "take_profit": 0.0,
-            "reasoning": "Gemini analyzer disabled",
-            "error": "Gemini not available",
+            "reasoning": "Ollama analyzer disabled",
+            "error": "Ollama not available",
+            "provider": "ollama",
         }
 
     def _get_rate_limited_response(self, symbol: str) -> Dict:
-        """Return response when rate limited with no cache"""
+        """Return response when rate limited with no cache."""
         return {
             "symbol": symbol,
             "timestamp": datetime.now().isoformat(),
@@ -352,10 +355,11 @@ RECENT PRICE ACTION (last {n_candles} candles):
             "reasoning": "Rate limited, no cached result available",
             "error": "Rate limited",
             "from_cache": False,
+            "provider": "ollama",
         }
 
     def _get_error_response(self, symbol: str, error: str) -> Dict:
-        """Return response when analysis fails"""
+        """Return response when analysis fails."""
         return {
             "symbol": symbol,
             "timestamp": datetime.now().isoformat(),
@@ -367,33 +371,25 @@ RECENT PRICE ACTION (last {n_candles} candles):
             "take_profit": 0.0,
             "reasoning": "Analysis failed",
             "error": error,
+            "provider": "ollama",
         }
 
 
 # Demo/Testing
 if __name__ == "__main__":
-    print("🤖 Gemini Market Analyzer - Demo\n")
-
-    # Check if API key is available
-    api_key = os.getenv("GOOGLE_API_KEY")
-
-    if not api_key:
-        print("⚠️  No GOOGLE_API_KEY environment variable set")
-        print("\nTo use Gemini:")
-        print("1. Get API key from https://makersuite.google.com/app/apikey")
-        print("2. Set environment variable: export GOOGLE_API_KEY='your-key'")
-        print("3. Run this script again")
-        print("\nFor now, showing mock functionality...\n")
+    print("🦙 Ollama Market Analyzer - Demo\n")
 
     # Create analyzer
-    analyzer = GeminiMarketAnalyzer()
+    analyzer = OllamaMarketAnalyzer()
 
     if not analyzer.enabled:
-        print("❌ Gemini analyzer not enabled")
-        print("   Install: pip install google-generativeai")
+        print("❌ Ollama analyzer not enabled")
+        print("   Install Ollama: brew install ollama")
+        print("   Start server: ollama serve")
+        print("   Pull model: ollama pull mistral:7b")
     else:
-        print("✅ Gemini analyzer initialized")
-        print(f"   Model: {analyzer.model_name}\n")
+        print("✅ Ollama analyzer initialized")
+        print(f"   Model: {analyzer.model}\n")
 
         # Mock price data
         import random
@@ -406,21 +402,18 @@ if __name__ == "__main__":
             "volume": [1000 + random.randint(-200, 200) for _ in range(50)],
         }
 
-        print("Analyzing EUR/USD...\n")
+        print("Analyzing EUR/USD (this may take 5-10 seconds)...\n")
 
-        if api_key:
-            # Real analysis
-            result = analyzer.analyze_symbol("EURUSD", price_data, "H1")
+        # Real analysis
+        result = analyzer.analyze_symbol("EURUSD", price_data, "H1")
 
-            print("📊 Analysis Results:")
-            print(f"   Bias: {result['bias']}")
-            print(f"   Signal: {result['signal']}")
-            print(f"   Confidence: {result['confidence']}%")
-            print(f"   Entry: {result['entry']:.5f}")
-            print(f"   Stop Loss: {result['stop_loss']:.5f}")
-            print(f"   Take Profit: {result['take_profit']:.5f}")
-            print(f"   Reasoning: {result['reasoning']}")
-        else:
-            print("   (Skipping actual API call - no API key)")
+        print("📊 Analysis Results:")
+        print(f"   Bias: {result['bias']}")
+        print(f"   Signal: {result['signal']}")
+        print(f"   Confidence: {result['confidence']}%")
+        print(f"   Entry: {result['entry']:.5f}")
+        print(f"   Stop Loss: {result['stop_loss']:.5f}")
+        print(f"   Take Profit: {result['take_profit']:.5f}")
+        print(f"   Reasoning: {result['reasoning']}")
 
     print("\n✅ Demo complete!")

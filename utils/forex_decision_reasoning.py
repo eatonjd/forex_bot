@@ -173,8 +173,15 @@ class ForexRiskManager:
     def __init__(self, max_spread_pips: float = 3.0):
         self.max_spread_pips = max_spread_pips
 
+    def _get_pip_size(self, symbol: str) -> float:
+        """Get pip size for a symbol"""
+        if "JPY" in symbol.upper():
+            return 0.01
+        return 0.0001
+
     def assess(
         self,
+        symbol: str,
         action: TradingAction,
         price: float,
         spread: Optional[float] = None,
@@ -191,7 +198,8 @@ class ForexRiskManager:
 
         # Spread check
         if spread:
-            spread_pips = spread / 0.0001
+            pip_size = self._get_pip_size(symbol)
+            spread_pips = spread / pip_size
             spread_ok = spread_pips <= self.max_spread_pips
             if not spread_ok:
                 warnings.append(
@@ -216,9 +224,11 @@ class ForexRiskManager:
 
         status = "✅ APPROVED" if approved else "⚠️ CAUTION"
 
+        pip_size = self._get_pip_size(symbol)
+        spread_pips = (spread / pip_size) if spread else 0.0
         summary = (
             f"🛡️ RISK ASSESSMENT: {status}\n"
-            f"   Spread: {'✓' if spread_ok else '✗'}\n"
+            f"   Spread: {'✓' if spread_ok else '✗'} ({spread_pips:.1f} pips)\n"
             f"   Volatility: {volatility}\n"
             f"   Position Mgr: {'✓' if position_manager_active else '○'}"
         )
@@ -283,6 +293,7 @@ class ForexDecisionReasoner:
         # Risk Assessment
         pm_active = position_manager_state is not None
         risk_assessment = self.risk_manager.assess(
+            symbol=symbol,
             action=action,
             price=price,
             spread=spread,

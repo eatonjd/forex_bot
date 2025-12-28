@@ -1,0 +1,45 @@
+{
+  "timestamp": "2025-12-27T09:43:07.521596",
+  "results": [
+    {
+      "model": "llama3.2:latest",
+      "runs": 3,
+      "latencies": [
+        30.00648784637451,
+        10.964370965957642,
+        10.783912897109985
+      ],
+      "quality_scores": [
+        50.0,
+        100.0,
+        100.0
+      ],
+      "errors": 0,
+      "avg_latency": 17.251590569814045,
+      "min_latency": 10.783912897109985,
+      "max_latency": 30.00648784637451,
+      "avg_quality": 83.33333333333333,
+      "memory_delta_mb": -6.7578125
+    },
+    {
+      "model": "llama3.1:latest",
+      "runs": 3,
+      "latencies": [
+        30.004082918167114,
+        30.012451171875,
+        30.006455898284912
+      ],
+      "quality_scores": [
+        50.0,
+        50.0,
+        50.0
+      ],
+      "errors": 0,
+      "avg_latency": 30.00766332944234,
+      "min_latency": 30.004082918167114,
+      "max_latency": 30.012451171875,
+      "avg_quality": 50.0,
+      "memory_delta_mb": 0.1796875
+    }
+  ]
+}

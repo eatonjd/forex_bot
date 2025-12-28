@@ -119,13 +119,18 @@ class ImprovedRewardEnv(gym.Env):
 
     def _calculate_reward(self, prev_value, curr_value, action):
         """
-        IMPROVED REWARD: 60% Returns + 20% Risk-Adjusted + 20% Activity
-        """
-        # 1. Simple return (60% weight)
-        simple_return = (curr_value - prev_value) / prev_value if prev_value > 0 else 0
-        return_component = simple_return * 60
+        IMPROVED REWARD V3: 45% Returns + 15% Risk-Adjusted + 35% Activity + Inactivity Penalty
 
-        # 2. Risk-adjusted component (20% weight)
+        Changes from V1:
+        - Increased activity bonus from 20% to 35%
+        - Reduced return component from 60% to 45%
+        - Added aggressive inactivity penalty for holding too long
+        """
+        # 1. Simple return (45% weight)
+        simple_return = (curr_value - prev_value) / prev_value if prev_value > 0 else 0
+        return_component = simple_return * 45
+
+        # 2. Risk-adjusted component (15% weight)
         self.returns.append(simple_return)
         recent_returns = self.returns[-20:]
 
@@ -133,24 +138,37 @@ class ImprovedRewardEnv(gym.Env):
             mean_ret = np.mean(recent_returns)
             std_ret = np.std(recent_returns) + 1e-8
             sharpe = mean_ret / std_ret
-            risk_component = sharpe * 20
+            risk_component = sharpe * 15
         else:
             risk_component = 0
 
-        # 3. Activity bonus (20% weight)
-        # Encourages trading vs always holding
+        # 3. Activity bonus (35% weight)
         self.recent_actions.append(action)
         if len(self.recent_actions) > 10:
             self.recent_actions = self.recent_actions[-10:]
 
-        # Reward variety in actions (not just holding)
         unique_actions = len(set(self.recent_actions))
-        activity_bonus = (unique_actions / 3.0) * 20  # Max when using all 3 actions
+        activity_bonus = (unique_actions / 3.0) * 35
 
-        # 4. Trade bonus (small reward for completing trades)
-        trade_bonus = 5 if action in [1, 2] and self.shares_held > 0 else 0
+        # 4. Trade bonus (increased)
+        trade_bonus = 8 if action in [1, 2] and self.shares_held > 0 else 0
 
-        total_reward = return_component + risk_component + activity_bonus + trade_bonus
+        # 5. AGGRESSIVE INACTIVITY PENALTY
+        inactivity_penalty = 0
+        if action == 0 and self.shares_held == 0:
+            inactivity_penalty = -5.0
+        elif action == 0 and len(self.recent_actions) > 5:
+            hold_count = sum(1 for a in self.recent_actions[-5:] if a == 0)
+            if hold_count >= 4:
+                inactivity_penalty = -3.0
+
+        total_reward = (
+            return_component
+            + risk_component
+            + activity_bonus
+            + trade_bonus
+            + inactivity_penalty
+        )
 
         return total_reward
 

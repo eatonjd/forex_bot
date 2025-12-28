@@ -9,8 +9,10 @@ Created: 2025-12-19
 """
 
 import os
+import time
 from typing import Dict, Optional, List
 from datetime import datetime
+import requests
 import oandapyV20
 from oandapyV20 import API
 from oandapyV20.endpoints import accounts, orders, positions, pricing, instruments
@@ -66,14 +68,14 @@ class OANDAConnector:
                 from utils.spread_provider import AlphaVantageSpreadProvider
 
                 self.spread_provider = AlphaVantageSpreadProvider()
-                print(f"✅ Real-time spreads enabled (Alpha Vantage)")
+                print(f"✅ Real-time spreads enabled (Alpha Vantage)", flush=True)
             except Exception as e:
-                print(f"⚠️  Could not initialize spread provider: {e}")
-                print("   Using OANDA spreads")
+                print(f"⚠️  Could not initialize spread provider: {e}", flush=True)
+                print("   Using OANDA spreads", flush=True)
                 self.use_real_spreads = False
 
-        print(f"✅ Connected to OANDA ({environment} environment)")
-        print(f"   Account: {self.account_id}")
+        print(f"✅ Connected to OANDA ({environment} environment)", flush=True)
+        print(f"   Account: {self.account_id}", flush=True)
 
     def get_account_summary(self) -> Dict:
         """Get account balance and summary"""
@@ -93,53 +95,77 @@ class OANDAConnector:
                 "open_trades": int(account.get("openTradeCount", 0)),
             }
         except V20Error as e:
-            print(f"Error getting account: {e}")
+            print(f"Error getting account: {e}", flush=True)
             return {}
 
-    def get_current_price(self, instrument: str) -> Optional[Dict]:
+    def get_current_price(
+        self, instrument: str, max_retries: int = 3
+    ) -> Optional[Dict]:
         """
         Get current bid/ask price for instrument.
 
         Args:
             instrument: e.g., 'EUR_USD', 'GBP_USD'
+            max_retries: Number of retries on connection errors (default: 3)
         """
-        try:
-            params = {"instruments": instrument}
-            endpoint = pricing.PricingInfo(accountID=self.account_id, params=params)
-            response = self.api.request(endpoint)
+        for attempt in range(max_retries):
+            try:
+                params = {"instruments": instrument}
+                endpoint = pricing.PricingInfo(accountID=self.account_id, params=params)
+                response = self.api.request(endpoint)
 
-            if response["prices"]:
-                price_data = response["prices"][0]
-                bid = float(price_data["bids"][0]["price"])
-                ask = float(price_data["asks"][0]["price"])
-                spread = ask - bid
+                if response["prices"]:
+                    price_data = response["prices"][0]
+                    bid = float(price_data["bids"][0]["price"])
+                    ask = float(price_data["asks"][0]["price"])
+                    spread = ask - bid
 
-                # Override spread with Alpha Vantage if enabled
-                if self.use_real_spreads and self.spread_provider:
-                    # Convert pips to price
-                    pip_size = 0.01 if "JPY" in instrument else 0.0001
+                    # Override spread with Alpha Vantage if enabled
+                    if self.use_real_spreads and self.spread_provider:
+                        # Convert pips to price
+                        pip_size = 0.01 if "JPY" in instrument else 0.0001
 
-                    real_spread_pips = self.spread_provider.get_spread(instrument)
-                    if real_spread_pips is not None:
-                        spread = real_spread_pips * pip_size
-                    else:
-                        # Use typical spread as fallback
-                        typical_pips = self.spread_provider.get_typical_spread(
-                            instrument
-                        )
-                        spread = typical_pips * pip_size
+                        real_spread_pips = self.spread_provider.get_spread(instrument)
+                        if real_spread_pips is not None:
+                            spread = real_spread_pips * pip_size
+                        else:
+                            # Use typical spread as fallback
+                            typical_pips = self.spread_provider.get_typical_spread(
+                                instrument
+                            )
+                            spread = typical_pips * pip_size
 
-                return {
-                    "instrument": instrument,
-                    "bid": bid,
-                    "ask": ask,
-                    "spread": spread,
-                    "time": price_data["time"],
-                }
-            return None
-        except V20Error as e:
-            print(f"Error getting price: {e}")
-            return None
+                    return {
+                        "instrument": instrument,
+                        "bid": bid,
+                        "ask": ask,
+                        "spread": spread,
+                        "time": price_data["time"],
+                    }
+                return None
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+            ) as e:
+                wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
+                print(
+                    f"⚠️  Connection error (attempt {attempt + 1}/{max_retries}): {e}",
+                    flush=True,
+                )
+                if attempt < max_retries - 1:
+                    print(f"   Retrying in {wait_time}s...", flush=True)
+                    time.sleep(wait_time)
+                else:
+                    print(f"❌ Max retries reached for {instrument}", flush=True)
+                    return None
+            except V20Error as e:
+                print(f"Error getting price: {e}", flush=True)
+                return None
+
+    def _round_price(self, instrument: str, price: float) -> str:
+        """Round price to correct precision for OANDA"""
+        precision = 3 if "JPY" in instrument.upper() else 5
+        return f"{price:.{precision}f}"
 
     def place_market_order(
         self,
@@ -163,7 +189,7 @@ class OANDAConnector:
                     "type": "MARKET",
                     "instrument": instrument,
                     "units": str(units),
-                    "timeInForce": "FOK",
+                    "timeInForce": "IOC",
                     "positionFill": "DEFAULT",
                 }
             }
@@ -171,19 +197,20 @@ class OANDAConnector:
             # Add SL/TP if provided
             if stop_loss:
                 order_data["order"]["stopLossOnFill"] = {
-                    "price": str(stop_loss),
+                    "price": self._round_price(instrument, stop_loss),
                     "timeInForce": "GTC",
                 }
 
             if take_profit:
                 order_data["order"]["takeProfitOnFill"] = {
-                    "price": str(take_profit),
+                    "price": self._round_price(instrument, take_profit),
                     "timeInForce": "GTC",
                 }
 
             endpoint = orders.OrderCreate(accountID=self.account_id, data=order_data)
             response = self.api.request(endpoint)
 
+            # Check if order was filled
             if "orderFillTransaction" in response:
                 fill = response["orderFillTransaction"]
                 return {
@@ -194,10 +221,20 @@ class OANDAConnector:
                     "pl": float(fill.get("pl", 0)),
                     "time": fill["time"],
                 }
-            return response
+
+            # If not filled immediately (e.g. cancelled/killed), check for cancel reason
+            if "orderCancelTransaction" in response:
+                cancel = response["orderCancelTransaction"]
+                print(
+                    f"⚠️  Order cancelled: {cancel.get('reason', 'Unknown reason')}",
+                    flush=True,
+                )
+
+            print(f"⚠️  Order not filled! Full response: {response}", flush=True)
+            return None
 
         except V20Error as e:
-            print(f"Error placing order: {e}")
+            print(f"Error placing order: {e}", flush=True)
             return None
 
     def get_open_positions(self) -> List[Dict]:
@@ -228,7 +265,7 @@ class OANDAConnector:
 
             return positions_list
         except V20Error as e:
-            print(f"Error getting positions: {e}")
+            print(f"Error getting positions: {e}", flush=True)
             return []
 
     def close_position(
@@ -243,7 +280,7 @@ class OANDAConnector:
             response = self.api.request(endpoint)
             return response
         except V20Error as e:
-            print(f"Error closing position: {e}")
+            print(f"Error closing position: {e}", flush=True)
             return None
 
     def get_candles(
@@ -280,54 +317,58 @@ class OANDAConnector:
 
             return candles
         except V20Error as e:
-            print(f"Error getting candles: {e}")
+            print(f"Error getting candles: {e}", flush=True)
             return []
 
 
 if __name__ == "__main__":
     # Test connection
-    print("=" * 60)
-    print("Testing OANDA Connection")
-    print("=" * 60)
-    print()
+    print("=" * 60, flush=True)
+    print("Testing OANDA Connection", flush=True)
+    print("=" * 60, flush=True)
+    print("", flush=True)
 
     try:
         # Connect
         oanda = OANDAConnector(environment="practice")
 
         # Get account info
-        print("\n📊 Account Summary:")
+        print("\n📊 Account Summary:", flush=True)
         account = oanda.get_account_summary()
         if account:
-            print(f"   Balance: ${account['balance']:,.2f} {account['currency']}")
-            print(f"   NAV: ${account['nav']:,.2f}")
-            print(f"   Unrealized P/L: ${account['unrealized_pl']:,.2f}")
-            print(f"   Open Positions: {account['open_positions']}")
-            print(f"   Open Trades: {account['open_trades']}")
+            print(
+                f"   Balance: ${account['balance']:,.2f} {account['currency']}",
+                flush=True,
+            )
+            print(f"   NAV: ${account['nav']:,.2f}", flush=True)
+            print(f"   Unrealized P/L: ${account['unrealized_pl']:,.2f}", flush=True)
+            print(f"   Open Positions: {account['open_positions']}", flush=True)
+            print(f"   Open Trades: {account['open_trades']}", flush=True)
 
         # Get current price
-        print("\n💹 EUR/USD Price:")
+        print("\n💹 EUR/USD Price:", flush=True)
         price = oanda.get_current_price("EUR_USD")
         if price:
-            print(f"   Bid: {price['bid']}")
-            print(f"   Ask: {price['ask']}")
-            print(f"   Spread: {price['spread']:.5f}")
+            print(f"   Bid: {price['bid']}", flush=True)
+            print(f"   Ask: {price['ask']}", flush=True)
+            print(f"   Spread: {price['spread']:.5f}", flush=True)
 
         # Get positions
-        print("\n📍 Open Positions:")
+        print("\n📍 Open Positions:", flush=True)
         positions = oanda.get_open_positions()
         if positions:
             for pos in positions:
                 print(
-                    f"   {pos['instrument']}: {pos['long_units']} units, P/L: ${pos['unrealized_pl']:.2f}"
+                    f"   {pos['instrument']}: {pos['long_units']} units, P/L: ${pos['unrealized_pl']:.2f}",
+                    flush=True,
                 )
         else:
-            print("   No open positions")
+            print("   No open positions", flush=True)
 
-        print("\n✅ Connection test successful!")
+        print("\n✅ Connection test successful!", flush=True)
 
     except Exception as e:
-        print(f"\n❌ Connection test failed: {e}")
+        print(f"\n❌ Connection test failed: {e}", flush=True)
         import traceback
 
         traceback.print_exc()

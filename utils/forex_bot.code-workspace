@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../stock_bot"
+		},
+		{
+			"path": "../../forex_models"
+		},
+		{
+			"path": "../../trading_common"
+		}
+	],
+	"settings": {}
+}

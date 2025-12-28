@@ -126,8 +126,62 @@ Performance:
 
         return summary
 
+    def _get_summary_dict(self) -> dict:
+        """Get summary as a dictionary for JSON export."""
+        now = datetime.now()
+        total_trades = self.stats["wins"] + self.stats["losses"]
+        win_rate = (self.stats["wins"] / total_trades * 100) if total_trades > 0 else 0
+
+        return {
+            "date": now.strftime("%Y-%m-%d"),
+            "bot": "forex_bot",
+            "summary": {
+                "iterations": self.stats["iterations"],
+                "trades_executed": self.stats["trades_executed"],
+                "win_rate": round(win_rate, 1),
+                "wins": self.stats["wins"],
+                "losses": self.stats["losses"],
+                "total_pnl_pips": round(self.stats["total_pnl_pips"], 1),
+                "total_pnl_usd": round(self.stats["total_pnl_usd"], 2),
+                "best_trade": self.stats["best_trade"],
+                "worst_trade": self.stats["worst_trade"],
+                "hold_reasons": dict(self.stats["hold_reasons"]),
+            },
+        }
+
+    def upload_to_gcs(self, summary_type: str = "daily"):
+        """Upload summary to Google Cloud Storage."""
+        if os.environ.get("USE_CLOUD_STORAGE", "").lower() != "true":
+            return None
+
+        try:
+            from google.cloud import storage
+
+            bucket_name = os.environ.get("GCS_BUCKET_NAME", "forex-bot-state")
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+
+            # Create JSON report
+            report_data = self._get_summary_dict()
+            report_data["summary_type"] = summary_type
+
+            filename = (
+                f"reports/{summary_type}_{datetime.now().strftime('%Y-%m-%d')}.json"
+            )
+            blob = bucket.blob(filename)
+            blob.upload_from_string(
+                json.dumps(report_data, indent=2), content_type="application/json"
+            )
+
+            print(f"📤 Report uploaded to GCS: gs://{bucket_name}/{filename}")
+            return f"gs://{bucket_name}/{filename}"
+
+        except Exception as e:
+            print(f"❌ GCS upload failed: {e}")
+            return None
+
     def save_summary(self, summary_type: str = "daily"):
-        """Save summary to file"""
+        """Save summary to file and optionally upload to GCS."""
         summary = self.generate_summary(summary_type)
         filename = f"{summary_type}_summary_{datetime.now().strftime('%Y-%m-%d')}.txt"
         filepath = os.path.join(self.data_dir, filename)
@@ -136,6 +190,10 @@ Performance:
             f.write(summary)
 
         print(f"📊 Summary saved to: {filepath}")
+
+        # Upload to GCS if enabled
+        self.upload_to_gcs(summary_type)
+
         return filepath
 
     def print_summary(self, summary_type: str = "daily"):
