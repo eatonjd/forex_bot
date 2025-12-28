@@ -2,12 +2,13 @@
 Configuration settings for the Trading Bot.
 """
 
+import os
 from datetime import datetime
 
 # Trading Settings
 INITIAL_BALANCE = 10000  # Starting cash in USD
 TRANSACTION_COST = 0.001  # 0.1% per trade
-TRADE_FRACTION = 0.3  # Trade 30% of available cash/shares per action
+TRADE_FRACTION = 0.5  # Trade 50% of available cash (more aggressive for daily targets)
 
 # Data Settings
 DEFAULT_SYMBOL = "AAPL"
@@ -52,7 +53,9 @@ VOLATILITY_PENALTY = 0.1  # Penalize high-volatility strategies
 
 # Dynamic Position Sizing (from Bot-ForexMT5)
 ENABLE_DYNAMIC_LOT_SIZING = True  # Enable risk-based position sizing
-RISK_PERCENT_PER_TRADE = 1.0  # Risk 1% of balance per trade
+RISK_PERCENT_PER_TRADE = (
+    2.0  # Risk 2% of balance per trade (more aggressive for daily targets)
+)
 MIN_LOT_SIZE = 0.01  # Minimum lot size
 MAX_LOT_SIZE = 10.0  # Maximum lot size
 DEFAULT_PIP_VALUE = 10.0  # Standard pip value for forex pairs
@@ -93,14 +96,14 @@ ENABLE_LSTM_POLICY = False  # Enable LSTM policy (Phase 3.1)
 
 # Telegram Bot Control (from AI-Scalpel-Trading-Bot) - Phase 0
 ENABLE_TELEGRAM_BOT = False
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # Edge Positioning (from AI-Scalpel-Trading-Bot) - Phase 1.2
 ENABLE_EDGE_POSITIONING = False  # Enable after testing
 EDGE_CAPITAL_PERCENTAGE = 0.5  # Use 50% of capital for Edge
 EDGE_ALLOWED_RISK = 0.01  # Risk 1% per trade
-EDGE_MIN_WINRATE = 0.60  # Filter pairs < 60% winrate  
+EDGE_MIN_WINRATE = 0.60  # Filter pairs < 60% winrate
 EDGE_MIN_EXPECTANCY = 0.20  # Filter pairs < 0.20 expectancy
 EDGE_MIN_TRADE_NUMBER = 10  # Minimum trades for statistics
 EDGE_STOPLOSS_RANGE_MIN = -0.01  # -1% minimum stoploss
@@ -126,19 +129,42 @@ ATR_MAX_SL_PIPS = 100.0  # Maximum SL distance in pips
 ENABLE_HYPEROPT = False  # Enable parameter optimization
 HYPEROPT_EPOCHS = 50  # Number of optimization iterations
 HYPEROPT_N_JOBS = 4  # Parallel workers for optimization
-HYPEROPT_OBJECTIVE = 'sharpe'  # Loss function: sharpe, sortino, calmar, custom
-HYPEROPT_SEARCH_SPACE = 'rl'  # What to optimize: rl, indicators, risk, edge, all
-HYPEROPT_SAVE_PATH = 'experiments/hyperopt_results/'
+HYPEROPT_OBJECTIVE = "sharpe"  # Loss function: sharpe, sortino, calmar, custom
+HYPEROPT_SEARCH_SPACE = "rl"  # What to optimize: rl, indicators, risk, edge, all
+HYPEROPT_SAVE_PATH = "experiments/hyperopt_results/"
 
-# Gemini AI Analysis (Phase 2.2)
-ENABLE_GEMINI_ANALYSIS = False  # Enable AI-powered analysis
-GEMINI_API_KEY = os.getenv('GOOGLE_API_KEY', '')
-GEMINI_MODEL = 'gemini-1.5-flash'  # or 'gemini-1.5-pro'
+# LLM Provider Selection
+# Options: "none" (disabled), "ollama" (local), "gemini" (cloud API)
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "none")
+
+# Ollama Configuration (Local LLM)
+OLLAMA_MODEL = os.getenv(
+    "OLLAMA_MODEL", "llama3.2"
+)  # Best for Intel Mac (17s, 83% quality)
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_TIMEOUT = 30  # Seconds per request
+OLLAMA_TEMPERATURE = 0.7  # 0.0-2.0, lower = more deterministic
+
+# Gemini AI Analysis (Cloud API)
+ENABLE_GEMINI_ANALYSIS = LLM_PROVIDER == "gemini"  # Auto-set based on provider
+GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+GEMINI_MODEL = "gemini-2.0-flash"  # or 'gemini-2.0-pro'
 GEMINI_TEMPERATURE = 0.7  # 0.0-2.0, lower = more deterministic
 GEMINI_USE_IN_SCANNER = False  # Integrate with multi-symbol scanner
+GEMINI_RATE_LIMIT_SECONDS = 3600  # Minimum seconds between calls per symbol
+GEMINI_REQUIRE_CONFIRMATION = False  # Only trade when LLM agrees with RL model
+GEMINI_MIN_CONFIDENCE = 60  # Minimum LLM confidence % to confirm a trade
+
+# Shared LLM Settings (apply to both Ollama and Gemini)
+LLM_RATE_LIMIT_SECONDS = int(os.getenv("LLM_RATE_LIMIT_SECONDS", "3600"))
+LLM_REQUIRE_CONFIRMATION = (
+    os.getenv("LLM_REQUIRE_CONFIRMATION", "false").lower() == "true"
+)
+LLM_MIN_CONFIDENCE = int(os.getenv("LLM_MIN_CONFIDENCE", "60"))
+
 
 # Position Management (Phase 4)
-ENABLE_POSITION_MANAGEMENT = False  # Enable breakeven, trailing, auto-close
+ENABLE_POSITION_MANAGEMENT = True  # Enable breakeven, trailing, auto-close
 # Breakeven
 ENABLE_BREAKEVEN = True
 BREAKEVEN_PIPS = 20.0  # Move to breakeven after X pips profit
@@ -149,5 +175,5 @@ TRAILING_START_PIPS = 30.0  # Start trailing after X pips profit
 TRAILING_STEP_PIPS = 10.0  # Move SL in steps of X pips
 TRAILING_DISTANCE_PIPS = 15.0  # Maintain X pips distance from price
 # Auto-Close
-ENABLE_AUTO_CLOSE = False
+ENABLE_AUTO_CLOSE = True  # Auto-close at daily profit target
 AUTO_CLOSE_PROFIT_USD = 100.0  # Close position at $X profit
