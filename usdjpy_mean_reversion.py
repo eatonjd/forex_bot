@@ -88,9 +88,14 @@ class USDJPYMeanReversionBot:
 
         # Risk management
         self.risk_percent = 0.02  # 2% risk per trade
-        self.daily_target = 100  # $100 daily target
+        self.daily_target = 100  # $100 - triggers trailing stop
+        self.trailing_amount = 50  # $50 - close if profit drops this much from peak
         self.daily_pnl = 0
         self.max_daily_loss = -200  # Stop trading if down $200
+
+        # Trailing stop tracking
+        self.trailing_active = False  # Becomes True when profit >= daily_target
+        self.peak_profit = 0  # Highest profit seen while trailing
 
         # Position tracking
         self.position = 0  # -1=short, 0=flat, 1=long
@@ -273,23 +278,52 @@ class USDJPYMeanReversionBot:
 
         # Show unrealized P/L if in position
         if pos_dir != 0:
+            trailing_status = " 🎯 TRAILING" if self.trailing_active else ""
             print(
-                f"   📊 Position: {'LONG' if pos_dir == 1 else 'SHORT'} | Unrealized P/L: ${unrealized_pnl:+.2f}"
+                f"   📊 Position: {'LONG' if pos_dir == 1 else 'SHORT'} | P/L: ${unrealized_pnl:+.2f}{trailing_status}"
             )
-
-        # *** AUTO-CLOSE AT $100 PROFIT ***
-        if pos_dir != 0 and unrealized_pnl >= self.daily_target:
-            print(
-                f"🎯 PROFIT TARGET HIT! Unrealized: ${unrealized_pnl:+.2f} >= ${self.daily_target}"
-            )
-            success, realized_pnl = self.close_position()
-            if success:
-                self.daily_pnl += realized_pnl
-                print(f"💰 Daily P/L: ${self.daily_pnl:+.2f}")
-                send_notification(
-                    f"🎯 PROFIT TARGET! Closed USD/JPY for ${realized_pnl:+.2f}"
+            if self.trailing_active:
+                print(
+                    f"   📈 Peak: ${self.peak_profit:+.2f} | Trail trigger: ${self.peak_profit - self.trailing_amount:+.2f}"
                 )
-            return
+
+        # *** TRAILING PROFIT STOP ***
+        if pos_dir != 0:
+            # Activate trailing stop when profit >= target
+            if unrealized_pnl >= self.daily_target and not self.trailing_active:
+                self.trailing_active = True
+                self.peak_profit = unrealized_pnl
+                print(
+                    f"🎯 TRAILING STOP ACTIVATED! Profit: ${unrealized_pnl:+.2f} >= ${self.daily_target}"
+                )
+                send_notification(
+                    f"🎯 USD/JPY Trailing stop activated at ${unrealized_pnl:+.2f}"
+                )
+
+            # Update peak profit if still rising
+            if self.trailing_active and unrealized_pnl > self.peak_profit:
+                self.peak_profit = unrealized_pnl
+                print(f"📈 NEW PEAK PROFIT: ${self.peak_profit:+.2f}")
+
+            # Close if profit drops below peak - trailing amount
+            if self.trailing_active:
+                trailing_trigger = self.peak_profit - self.trailing_amount
+                if unrealized_pnl <= trailing_trigger:
+                    print(
+                        f"🔒 TRAILING STOP TRIGGERED! P/L: ${unrealized_pnl:+.2f} <= ${trailing_trigger:+.2f}"
+                    )
+                    success, realized_pnl = self.close_position()
+                    if success:
+                        self.daily_pnl += realized_pnl
+                        self.trailing_active = False
+                        self.peak_profit = 0
+                        print(
+                            f"💰 Locked in ${realized_pnl:+.2f} (Peak was ${self.peak_profit:+.2f})"
+                        )
+                        send_notification(
+                            f"🔒 USD/JPY Trailing stop! Closed for ${realized_pnl:+.2f}"
+                        )
+                    return
 
         # Check daily limits (realized P/L)
         if self.daily_pnl >= self.daily_target:
