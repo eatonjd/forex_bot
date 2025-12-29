@@ -156,15 +156,22 @@ class USDJPYMeanReversionBot:
             pos = r.response["position"]
             long_units = int(pos["long"]["units"])
             short_units = int(pos["short"]["units"])
+            long_pnl = float(pos["long"].get("unrealizedPL", 0))
+            short_pnl = float(pos["short"].get("unrealizedPL", 0))
 
             if long_units > 0:
-                return 1, long_units, float(pos["long"]["averagePrice"])
+                return 1, long_units, float(pos["long"]["averagePrice"]), long_pnl
             elif short_units != 0:
-                return -1, abs(short_units), float(pos["short"]["averagePrice"])
+                return (
+                    -1,
+                    abs(short_units),
+                    float(pos["short"]["averagePrice"]),
+                    short_pnl,
+                )
             else:
-                return 0, 0, 0
+                return 0, 0, 0, 0
         except:
-            return 0, 0, 0
+            return 0, 0, 0, 0
 
     def calculate_position_size(self, stop_pips: float = 20) -> int:
         """Calculate position size based on risk."""
@@ -242,8 +249,8 @@ class USDJPYMeanReversionBot:
 
     def run_once(self):
         """Run one iteration of the strategy."""
-        # Get current position
-        pos_dir, pos_units, entry_price = self.get_current_position()
+        # Get current position and unrealized P/L
+        pos_dir, pos_units, entry_price, unrealized_pnl = self.get_current_position()
 
         # Get candles
         df = self.get_candles(count=50)
@@ -264,7 +271,27 @@ class USDJPYMeanReversionBot:
             f"[{timestamp}] Price: {current_price:.3f} | Signal: {signal} ({confidence}%) | {reason}"
         )
 
-        # Check daily limits
+        # Show unrealized P/L if in position
+        if pos_dir != 0:
+            print(
+                f"   📊 Position: {'LONG' if pos_dir == 1 else 'SHORT'} | Unrealized P/L: ${unrealized_pnl:+.2f}"
+            )
+
+        # *** AUTO-CLOSE AT $100 PROFIT ***
+        if pos_dir != 0 and unrealized_pnl >= self.daily_target:
+            print(
+                f"🎯 PROFIT TARGET HIT! Unrealized: ${unrealized_pnl:+.2f} >= ${self.daily_target}"
+            )
+            success, realized_pnl = self.close_position()
+            if success:
+                self.daily_pnl += realized_pnl
+                print(f"💰 Daily P/L: ${self.daily_pnl:+.2f}")
+                send_notification(
+                    f"🎯 PROFIT TARGET! Closed USD/JPY for ${realized_pnl:+.2f}"
+                )
+            return
+
+        # Check daily limits (realized P/L)
         if self.daily_pnl >= self.daily_target:
             print(f"🎯 Daily target reached! P/L: ${self.daily_pnl:+.2f}")
             return
