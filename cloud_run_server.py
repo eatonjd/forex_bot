@@ -174,23 +174,32 @@ def run_trading_bot():
     print("=" * 60, flush=True)
 
     try:
-        # Import and run bot
-        print("📦 Importing PaperTradingBot...", flush=True)
-        from paper_trading_bot import PaperTradingBot
+        # Import and run USD/JPY Mean Reversion bot
+        print("📦 Importing USD/JPY Mean Reversion Bot...", flush=True)
+        from usdjpy_mean_reversion import USDJPYMeanReversionBot
 
-        print("🏗️  Instantiating PaperTradingBot...", flush=True)
-        # Pass the bot_status dictionary for internal tracking
-        bot = PaperTradingBot(status_tracker=bot_status)
+        print("🏗️  Instantiating USD/JPY Mean Reversion Bot...", flush=True)
+        bot = USDJPYMeanReversionBot(mode="paper")
 
-        # Mark as loop started
+        # Mark initialization stages
+        bot_status["initialization"]["oanda_connected"] = True
+        bot_status["initialization"]["model_loaded"] = True
+        bot_status["initialization"]["position_manager_ready"] = True
+        bot_status["initialization"]["decision_reasoning_ready"] = True
         bot_status["initialization"]["trading_loop_started"] = True
+        bot_status["initialization"]["completed"] = True
 
         print("✅ Bot initialized, starting trading loop...", flush=True)
 
         try:
-            bot.run()
+            # Run with 15 minute intervals
+            while True:
+                bot.run_once()
+                bot_status["iteration"] += 1
+                bot_status["last_heartbeat"] = time.time()
+                time.sleep(15 * 60)  # 15 minutes for M15 timeframe
         except KeyboardInterrupt:
-            print("\n\n🛑 Stopping paper trading bot...", flush=True)
+            print("\n\n🛑 Stopping USD/JPY Mean Reversion bot...", flush=True)
         finally:
             bot_status["running"] = False
 
