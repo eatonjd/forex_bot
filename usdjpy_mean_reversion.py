@@ -95,6 +95,12 @@ class USDJPYMeanReversionBot:
         self.daily_pnl = 0
         self.max_daily_loss = -200  # Stop trading if down $200
 
+        # Pyramiding / Scale-in settings
+        self.max_scale_ins = 3  # Max positions to add (total 4 including initial)
+        self.scale_in_count = 0  # Current number of scale-ins
+        self.min_profit_to_add = 25  # Must be $25+ in profit to add
+        self.scale_in_size_pct = 0.5  # Scale-ins are 50% of initial size
+
         # Trailing stop tracking
         self.trailing_active = False  # Becomes True when profit >= daily_target
         self.peak_profit = 0  # Highest profit seen while trailing
@@ -249,6 +255,7 @@ class USDJPYMeanReversionBot:
             send_notification(f"🤖 USD/JPY Closed. P/L: ${pnl:+.2f}")
 
             self.daily_pnl += pnl
+            self.scale_in_count = 0  # Reset pyramiding count
             return True, pnl
         except Exception as e:
             print(f"❌ Close error: {e}")
@@ -340,18 +347,54 @@ class USDJPYMeanReversionBot:
         if signal == "BUY" and confidence >= 50:
             if pos_dir == -1:  # Close short first
                 self.close_position()
+                self.scale_in_count = 0  # Reset scale-in count
 
             if pos_dir != 1:  # Open long if not already
                 units = self.calculate_position_size()
                 self.open_position("BUY", units)
+                self.scale_in_count = 0
+            elif pos_dir == 1:  # Already long - consider pyramiding
+                if (
+                    unrealized_pnl >= self.min_profit_to_add
+                    and self.scale_in_count < self.max_scale_ins
+                ):
+                    # Add to winning position
+                    base_units = self.calculate_position_size()
+                    add_units = int(base_units * self.scale_in_size_pct)
+                    print(
+                        f"📈 PYRAMIDING: Adding {add_units} units (scale-in #{self.scale_in_count + 1})"
+                    )
+                    self.open_position("BUY", add_units)
+                    self.scale_in_count += 1
+                    send_notification(
+                        f"📈 USD/JPY Pyramid: Added {add_units} units (P/L: ${unrealized_pnl:+.2f})"
+                    )
 
         elif signal == "SELL" and confidence >= 50:
             if pos_dir == 1:  # Close long first
                 self.close_position()
+                self.scale_in_count = 0  # Reset scale-in count
 
             if pos_dir != -1:  # Open short if not already
                 units = self.calculate_position_size()
                 self.open_position("SELL", units)
+                self.scale_in_count = 0
+            elif pos_dir == -1:  # Already short - consider pyramiding
+                if (
+                    unrealized_pnl >= self.min_profit_to_add
+                    and self.scale_in_count < self.max_scale_ins
+                ):
+                    # Add to winning position
+                    base_units = self.calculate_position_size()
+                    add_units = int(base_units * self.scale_in_size_pct)
+                    print(
+                        f"📉 PYRAMIDING: Adding {add_units} units (scale-in #{self.scale_in_count + 1})"
+                    )
+                    self.open_position("SELL", add_units)
+                    self.scale_in_count += 1
+                    send_notification(
+                        f"📉 USD/JPY Pyramid: Added {add_units} units (P/L: ${unrealized_pnl:+.2f})"
+                    )
 
     def run(self, interval_minutes: int = 15):
         """Run the bot continuously."""
