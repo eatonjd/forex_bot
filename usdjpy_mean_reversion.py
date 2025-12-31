@@ -36,10 +36,11 @@ import pandas as pd
 from utils.mean_reversion import MeanReversionStrategy
 
 try:
-    from utils.notifications import NotificationManager
+    from utils.notifications import TradingNotifier
 
-    notifier = NotificationManager()
-except:
+    notifier = TradingNotifier()
+except Exception as e:
+    print(f"⚠️ Notifications disabled: {e}")
     notifier = None
 
 
@@ -47,9 +48,10 @@ def send_notification(msg):
     """Send notification if available."""
     if notifier:
         try:
-            notifier.send_trade_alert("USD_JPY", "INFO", 0, msg)
-        except:
-            pass
+            # Use _send for simple messages
+            notifier._send(msg, title="USD/JPY Bot")
+        except Exception as e:
+            print(f"⚠️ Notification failed: {e}")
     print(f"📢 {msg}")
 
 
