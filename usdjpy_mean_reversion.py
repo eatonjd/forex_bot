@@ -19,6 +19,7 @@ import time
 import argparse
 from datetime import datetime
 from pathlib import Path
+import pytz
 
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -30,10 +31,28 @@ from oandapyV20.endpoints.orders import OrderCreate
 from oandapyV20.endpoints.positions import PositionDetails, PositionClose
 from oandapyV20.endpoints.trades import TradesList
 
-import numpy as np
 import pandas as pd
 
 from utils.mean_reversion import MeanReversionStrategy
+
+
+def is_forex_market_open() -> tuple:
+    """Check if forex market is open (Sunday 5pm - Friday 5pm ET)."""
+    et = pytz.timezone("America/New_York")
+    now = datetime.now(et)
+    weekday = now.weekday()  # 0=Monday, 6=Sunday
+    hour = now.hour
+
+    # Market closed: Friday after 5pm ET until Sunday 5pm ET
+    if weekday == 4 and hour >= 17:  # Friday after 5pm
+        return False, "Market closed (Friday evening)"
+    if weekday == 5:  # Saturday
+        return False, "Market closed (Saturday)"
+    if weekday == 6 and hour < 17:  # Sunday before 5pm
+        return False, "Market closed (Sunday - opens at 5pm ET)"
+
+    return True, "Market open"
+
 
 try:
     from utils.notifications import TradingNotifier
@@ -109,8 +128,14 @@ class USDJPYMeanReversionBot:
         self.position = 0  # -1=short, 0=flat, 1=long
         self.entry_price = 0
 
+        # Performance tracking
+        self.trades_today = []  # List of trades for daily summary
+        self.start_balance = 0  # Set on startup
+        self.last_summary_date = None  # Track when last summary was sent
+        self.daily_summary_hour = 17  # Send daily summary at 5pm ET (market close)
+
         print(f"\n{'=' * 60}")
-        print(f"🤖 USD/JPY MEAN REVERSION BOT")
+        print("🤖 USD/JPY MEAN REVERSION BOT")
         print(f"{'=' * 60}")
         print(f"Mode: {mode.upper()}")
         print(f"Account: {self.account_id}")
@@ -119,6 +144,48 @@ class USDJPYMeanReversionBot:
         print(f"Risk per trade: {self.risk_percent * 100}%")
         print(f"Daily target: ${self.daily_target}")
         print(f"{'=' * 60}\n")
+
+        # Sync positions and send startup alert
+        self._sync_positions()
+        self._send_startup_alert()
+
+    def _sync_positions(self):
+        """Sync with existing OANDA positions on startup."""
+        try:
+            pos_dir, pos_units, entry_price, unrealized_pnl = (
+                self.get_current_position()
+            )
+            if pos_dir != 0:
+                self.position = pos_dir
+                self.entry_price = entry_price
+                direction = "LONG" if pos_dir == 1 else "SHORT"
+                print(
+                    f"📍 Found existing position: {direction} {pos_units:,} units @ {entry_price:.3f}"
+                )
+                print(f"   Unrealized P/L: ${unrealized_pnl:+.2f}")
+            else:
+                print("📍 No existing position found")
+        except Exception as e:
+            print(f"⚠️ Could not sync positions: {e}")
+
+    def _send_startup_alert(self):
+        """Send startup notification with account info."""
+        try:
+            balance = self.get_account_balance()
+            self.start_balance = balance
+
+            msg = (
+                f"🚀 USD/JPY Bot Started\n"
+                f"Mode: {self.mode.upper()}\n"
+                f"Balance: ${balance:,.2f}\n"
+                f"Strategy: Mean Reversion (BB+RSI)\n"
+                f"Timeframe: {self.granularity}\n"
+                f"Daily Target: ${self.daily_target}"
+            )
+            send_notification(msg)
+            print("✅ Startup alert sent")
+        except Exception as e:
+            print(f"⚠️ Startup alert failed: {e}")
 
     def get_account_balance(self) -> float:
         """Get current account balance."""
@@ -227,6 +294,17 @@ class USDJPYMeanReversionBot:
             print(f"✅ Opened {direction} {units} units at {price}")
             send_notification(f"🤖 USD/JPY {direction} {units} units at {price}")
 
+            # Track trade for daily summary
+            self.trades_today.append(
+                {
+                    "time": datetime.now().isoformat(),
+                    "direction": direction,
+                    "units": units,
+                    "price": price,
+                    "type": "OPEN",
+                }
+            )
+
             return True, price
         except Exception as e:
             print(f"❌ Order error: {e}")
@@ -253,6 +331,16 @@ class USDJPYMeanReversionBot:
 
             print(f"✅ Closed position. P/L: ${pnl:+.2f}")
             send_notification(f"🤖 USD/JPY Closed. P/L: ${pnl:+.2f}")
+
+            # Track trade for daily summary
+            self.trades_today.append(
+                {
+                    "time": datetime.now().isoformat(),
+                    "direction": "CLOSE",
+                    "pnl": pnl,
+                    "type": "CLOSE",
+                }
+            )
 
             self.daily_pnl += pnl
             self.scale_in_count = 0  # Reset pyramiding count
@@ -396,13 +484,68 @@ class USDJPYMeanReversionBot:
                         f"📉 USD/JPY Pyramid: Added {add_units} units (P/L: ${unrealized_pnl:+.2f})"
                     )
 
+    def _send_daily_summary(self):
+        """Send daily trading summary at market close."""
+        try:
+            balance = self.get_account_balance()
+            pnl = (
+                balance - self.start_balance
+                if self.start_balance > 0
+                else self.daily_pnl
+            )
+            pnl_pct = (pnl / self.start_balance * 100) if self.start_balance > 0 else 0
+
+            trades_count = len(self.trades_today)
+
+            emoji = "📈" if pnl >= 0 else "📉"
+            msg = (
+                f"{emoji} USD/JPY Daily Summary\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"Trades: {trades_count}\n"
+                f"Start: ${self.start_balance:,.2f}\n"
+                f"End: ${balance:,.2f}\n"
+                f"P/L: ${pnl:+,.2f} ({pnl_pct:+.2f}%)\n"
+                f"━━━━━━━━━━━━━━━━━━"
+            )
+            send_notification(msg)
+            print(f"📊 Daily summary sent: P/L ${pnl:+,.2f}")
+
+            # Reset for next day
+            self.trades_today = []
+            self.start_balance = balance
+            self.daily_pnl = 0
+
+        except Exception as e:
+            print(f"⚠️ Daily summary failed: {e}")
+
     def run(self, interval_minutes: int = 15):
         """Run the bot continuously."""
         print(f"🚀 Starting bot (checking every {interval_minutes} minutes)...")
 
+        import pytz
+
+        et = pytz.timezone("America/New_York")
+
         while True:
             try:
+                # Check if forex market is open
+                market_open, reason = is_forex_market_open()
+                if not market_open:
+                    print(f"\n🌙 {reason} - sleeping 30 min")
+                    time.sleep(30 * 60)  # Sleep 30 min when market closed
+                    continue
+
+                # Check for daily summary time (5pm ET on weekdays)
+                now_et = datetime.now(et)
+                if now_et.hour == self.daily_summary_hour and now_et.weekday() < 5:
+                    today = now_et.date()
+                    if self.last_summary_date != today:
+                        self._send_daily_summary()
+                        self.last_summary_date = today
+
+                # Run trading logic
                 self.run_once()
+
             except Exception as e:
                 print(f"❌ Error: {e}")
 
