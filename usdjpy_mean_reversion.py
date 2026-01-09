@@ -313,21 +313,33 @@ class USDJPYMeanReversionBot:
     def close_position(self):
         """Close current position."""
         try:
+            # First check what position we actually have
+            pos_dir, pos_units, _, _ = self.get_current_position()
+
+            if pos_dir == 0:
+                print("ℹ️ No position to close")
+                return False, 0
+
+            # Only close the direction we're actually in
+            if pos_dir == 1:  # LONG
+                data = {"longUnits": "ALL"}
+            else:  # SHORT
+                data = {"shortUnits": "ALL"}
+
             r = PositionClose(
                 accountID=self.account_id,
                 instrument=self.instrument,
-                data={"longUnits": "ALL", "shortUnits": "ALL"},
+                data=data,
             )
             self.api.request(r)
 
             # Get P/L from response
-            long_pnl = float(
-                r.response.get("longOrderFillTransaction", {}).get("pl", 0)
-            )
-            short_pnl = float(
-                r.response.get("shortOrderFillTransaction", {}).get("pl", 0)
-            )
-            pnl = long_pnl + short_pnl
+            if pos_dir == 1:
+                pnl = float(r.response.get("longOrderFillTransaction", {}).get("pl", 0))
+            else:
+                pnl = float(
+                    r.response.get("shortOrderFillTransaction", {}).get("pl", 0)
+                )
 
             print(f"✅ Closed position. P/L: ${pnl:+.2f}")
             send_notification(f"🤖 USD/JPY Closed. P/L: ${pnl:+.2f}")
