@@ -174,34 +174,69 @@ def run_trading_bot():
     print("=" * 60, flush=True)
 
     try:
-        # Import and run USD/JPY Mean Reversion bot
-        print("📦 Importing USD/JPY Mean Reversion Bot...", flush=True)
-        from usdjpy_mean_reversion import USDJPYMeanReversionBot
+        # Check if parallel mode is enabled (live credentials present)
+        live_key = os.getenv("OANDA_API_KEY_LIVE")
+        live_account = os.getenv("OANDA_ACCOUNT_ID_LIVE")
 
-        print("🏗️  Instantiating USD/JPY Mean Reversion Bot...", flush=True)
-        bot = USDJPYMeanReversionBot(mode="paper")
+        if live_key and live_account:
+            # Use Parallel Trading Bot for slippage testing
+            print("📦 Importing Parallel Trading Bot (Demo + Live)...", flush=True)
+            from parallel_trading_bot import ParallelTradingBot
 
-        # Mark initialization stages
-        bot_status["initialization"]["oanda_connected"] = True
-        bot_status["initialization"]["model_loaded"] = True
-        bot_status["initialization"]["position_manager_ready"] = True
-        bot_status["initialization"]["decision_reasoning_ready"] = True
-        bot_status["initialization"]["trading_loop_started"] = True
-        bot_status["initialization"]["completed"] = True
+            print("🏗️  Instantiating Parallel Trading Bot...", flush=True)
+            bot = ParallelTradingBot()
 
-        print("✅ Bot initialized, starting trading loop...", flush=True)
+            # Mark initialization stages
+            bot_status["initialization"]["oanda_connected"] = True
+            bot_status["initialization"]["model_loaded"] = True
+            bot_status["initialization"]["position_manager_ready"] = True
+            bot_status["initialization"]["decision_reasoning_ready"] = True
+            bot_status["initialization"]["trading_loop_started"] = True
+            bot_status["initialization"]["completed"] = True
 
-        try:
-            # Run with 15 minute intervals
-            while True:
-                bot.run_once()
-                bot_status["iteration"] += 1
-                bot_status["last_heartbeat"] = time.time()
-                time.sleep(15 * 60)  # 15 minutes for M15 timeframe
-        except KeyboardInterrupt:
-            print("\n\n🛑 Stopping USD/JPY Mean Reversion bot...", flush=True)
-        finally:
-            bot_status["running"] = False
+            print("✅ Parallel bot initialized, starting trading loop...", flush=True)
+
+            try:
+                # Run with 15 minute intervals
+                while True:
+                    bot.run_once()
+                    bot_status["iteration"] += 1
+                    bot_status["last_heartbeat"] = time.time()
+                    time.sleep(15 * 60)  # 15 minutes for M15 timeframe
+            except KeyboardInterrupt:
+                print("\n\n🛑 Stopping Parallel Trading bot...", flush=True)
+                bot.print_slippage_report()
+            finally:
+                bot_status["running"] = False
+        else:
+            # Fallback to demo-only mode
+            print("📦 Importing USD/JPY Mean Reversion Bot (Demo only)...", flush=True)
+            from usdjpy_mean_reversion import USDJPYMeanReversionBot
+
+            print("🏗️  Instantiating USD/JPY Mean Reversion Bot...", flush=True)
+            bot = USDJPYMeanReversionBot(mode="paper")
+
+            # Mark initialization stages
+            bot_status["initialization"]["oanda_connected"] = True
+            bot_status["initialization"]["model_loaded"] = True
+            bot_status["initialization"]["position_manager_ready"] = True
+            bot_status["initialization"]["decision_reasoning_ready"] = True
+            bot_status["initialization"]["trading_loop_started"] = True
+            bot_status["initialization"]["completed"] = True
+
+            print("✅ Bot initialized, starting trading loop...", flush=True)
+
+            try:
+                # Run with 15 minute intervals
+                while True:
+                    bot.run_once()
+                    bot_status["iteration"] += 1
+                    bot_status["last_heartbeat"] = time.time()
+                    time.sleep(15 * 60)  # 15 minutes for M15 timeframe
+            except KeyboardInterrupt:
+                print("\n\n🛑 Stopping USD/JPY Mean Reversion bot...", flush=True)
+            finally:
+                bot_status["running"] = False
 
     except Exception as e:
         print(f"❌ Bot error: {e}", flush=True)

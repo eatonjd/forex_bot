@@ -172,6 +172,8 @@ gcloud run deploy ${SERVICE_NAME} \
     --set-env-vars "OANDA_API_KEY=${OANDA_API_KEY}" \
     --set-env-vars "OANDA_ACCOUNT_ID=${OANDA_ACCOUNT_ID}" \
     --set-env-vars "OANDA_ENVIRONMENT=practice" \
+    --set-env-vars "OANDA_API_KEY_LIVE=${OANDA_API_KEY_LIVE:-}" \
+    --set-env-vars "OANDA_ACCOUNT_ID_LIVE=${OANDA_ACCOUNT_ID_LIVE:-}" \
     --set-env-vars "USE_CLOUD_STORAGE=true" \
     --set-env-vars "GCS_BUCKET_NAME=forex-bot-state" \
     --set-env-vars "SMS_PHONE_NUMBER=${SMS_PHONE_NUMBER:-}" \
