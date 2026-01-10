@@ -4,6 +4,7 @@ Trade Logger and Performance Analyzer.
 
 Logs all trades with full context for continuous improvement.
 Stores data in JSON format for easy analysis.
+Supports both local file and Google Cloud Storage.
 
 Usage:
     # Log a trade
@@ -16,11 +17,20 @@ Usage:
 """
 
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Any
 from dataclasses import dataclass, asdict
 from pathlib import Path
 import statistics
+
+# Try to import GCS, fall back to local file if not available
+try:
+    from google.cloud import storage
+
+    GCS_AVAILABLE = True
+except ImportError:
+    GCS_AVAILABLE = False
 
 
 @dataclass
@@ -65,17 +75,39 @@ class TradeRecord:
 
 
 class TradeLogger:
-    """Log trades and analyze performance."""
+    """Log trades and analyze performance. Supports local files and GCS."""
 
-    def __init__(self, log_dir: str = "trade_logs"):
+    def __init__(self, log_dir: str = "trade_logs", bucket_name: str = None):
         """
         Initialize trade logger.
 
         Args:
-            log_dir: Directory to store trade logs
+            log_dir: Directory to store trade logs (local)
+            bucket_name: GCS bucket name (optional, uses env var if not provided)
         """
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(exist_ok=True)
+
+        # GCS configuration
+        self.bucket_name = bucket_name or os.getenv(
+            "GCS_BUCKET_NAME", "forex-bot-state"
+        )
+        self.use_gcs = (
+            GCS_AVAILABLE and os.getenv("USE_CLOUD_STORAGE", "").lower() == "true"
+        )
+        self.gcs_client = None
+        self.gcs_bucket = None
+
+        if self.use_gcs:
+            try:
+                self.gcs_client = storage.Client()
+                self.gcs_bucket = self.gcs_client.bucket(self.bucket_name)
+                print(f"📝 Trade logger: GCS enabled ({self.bucket_name})")
+            except Exception as e:
+                print(f"⚠️ GCS init failed, using local: {e}")
+                self.use_gcs = False
+        else:
+            print(f"📝 Trade logger: Local mode ({self.log_dir})")
 
         # Current open positions for P&L tracking
         self.open_positions = {}
@@ -87,30 +119,87 @@ class TradeLogger:
             date = datetime.now()
         return self.log_dir / f"trades_{date.strftime('%Y_%m')}.json"
 
+    def _get_gcs_blob_name(self, date: datetime = None) -> str:
+        """Get GCS blob name for a specific date."""
+        if date is None:
+            date = datetime.now()
+        return f"trade_logs/trades_{date.strftime('%Y_%m')}.json"
+
     def _load_trades(self, log_file: Path) -> List[Dict]:
-        """Load trades from a log file."""
-        if log_file.exists():
+        """Load trades from storage (GCS or local)."""
+        trades = []
+
+        # Try GCS first if enabled
+        if self.use_gcs and self.gcs_bucket:
+            try:
+                blob_name = f"trade_logs/{log_file.name}"
+                blob = self.gcs_bucket.blob(blob_name)
+                if blob.exists():
+                    content = blob.download_as_text()
+                    trades = json.loads(content)
+            except Exception as e:
+                print(f"⚠️ GCS load error: {e}")
+
+        # Fallback to local file
+        if not trades and log_file.exists():
             with open(log_file, "r") as f:
-                return json.load(f)
-        return []
+                trades = json.load(f)
+
+        return trades
 
     def _save_trades(self, trades: List[Dict], log_file: Path):
-        """Save trades to a log file."""
+        """Save trades to storage (GCS and local)."""
+        content = json.dumps(trades, indent=2, default=str)
+
+        # Always save locally
         with open(log_file, "w") as f:
-            json.dump(trades, f, indent=2)
+            f.write(content)
+
+        # Also save to GCS if enabled
+        if self.use_gcs and self.gcs_bucket:
+            try:
+                blob_name = f"trade_logs/{log_file.name}"
+                blob = self.gcs_bucket.blob(blob_name)
+                blob.upload_from_string(content, content_type="application/json")
+            except Exception as e:
+                print(f"⚠️ GCS save error: {e}")
 
     def _load_open_positions(self):
         """Load open positions from file."""
         positions_file = self.log_dir / "open_positions.json"
+
+        # Try GCS first
+        if self.use_gcs and self.gcs_bucket:
+            try:
+                blob = self.gcs_bucket.blob("trade_logs/open_positions.json")
+                if blob.exists():
+                    content = blob.download_as_text()
+                    self.open_positions = json.loads(content)
+                    return
+            except Exception as e:
+                print(f"⚠️ GCS load positions error: {e}")
+
+        # Fallback to local
         if positions_file.exists():
             with open(positions_file, "r") as f:
                 self.open_positions = json.load(f)
 
     def _save_open_positions(self):
-        """Save open positions to file."""
+        """Save open positions to file (local and GCS)."""
         positions_file = self.log_dir / "open_positions.json"
+        content = json.dumps(self.open_positions, indent=2, default=str)
+
+        # Save locally
         with open(positions_file, "w") as f:
-            json.dump(self.open_positions, f, indent=2)
+            f.write(content)
+
+        # Also save to GCS if enabled
+        if self.use_gcs and self.gcs_bucket:
+            try:
+                blob = self.gcs_bucket.blob("trade_logs/open_positions.json")
+                blob.upload_from_string(content, content_type="application/json")
+            except Exception as e:
+                print(f"⚠️ GCS save positions error: {e}")
 
     def log_trade(
         self,
@@ -219,6 +308,88 @@ class TradeLogger:
 
         print(f"📝 Trade logged: {action} {shares} {symbol} @ ${price:.2f}")
         return record
+
+    def log_forex_trade(
+        self,
+        action: str,  # "OPEN" or "CLOSE"
+        direction: str,  # "LONG" or "SHORT"
+        symbol: str = "USD_JPY",
+        units: int = 0,
+        price: float = 0.0,
+        pnl: float = None,
+        account_type: str = "demo",
+        signal_data: Dict = None,
+        market_data: Dict = None,
+    ):
+        """
+        Log a forex trade with context for future analysis.
+
+        Args:
+            action: "OPEN" or "CLOSE"
+            direction: "LONG" or "SHORT"
+            symbol: Currency pair
+            units: Position size
+            price: Fill price
+            pnl: P/L (for close trades)
+            account_type: "demo" or "live"
+            signal_data: RSI, BB position, confidence
+            market_data: Current price, ATR, etc
+        """
+        signal_data = signal_data or {}
+        market_data = market_data or {}
+
+        trade = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "direction": direction,
+            "symbol": symbol,
+            "units": units,
+            "price": price,
+            "pnl": pnl,
+            "account_type": account_type,
+            # Signal context
+            "rsi": signal_data.get("rsi"),
+            "bb_position": signal_data.get("bb_position"),
+            "confidence": signal_data.get("confidence"),
+            "signal_reason": signal_data.get("reason"),
+            # Market context
+            "current_price": market_data.get("current_price"),
+            "atr": market_data.get("atr"),
+            "spread": market_data.get("spread"),
+        }
+
+        # Load existing forex trades
+        forex_file = self.log_dir / "forex_trades.json"
+        trades = []
+
+        if self.use_gcs and self.gcs_bucket:
+            try:
+                blob = self.gcs_bucket.blob("trade_logs/forex_trades.json")
+                if blob.exists():
+                    trades = json.loads(blob.download_as_text())
+            except Exception:
+                pass
+
+        if not trades and forex_file.exists():
+            with open(forex_file, "r") as f:
+                trades = json.load(f)
+
+        trades.append(trade)
+
+        # Save trades
+        content = json.dumps(trades, indent=2, default=str)
+        with open(forex_file, "w") as f:
+            f.write(content)
+
+        if self.use_gcs and self.gcs_bucket:
+            try:
+                blob = self.gcs_bucket.blob("trade_logs/forex_trades.json")
+                blob.upload_from_string(content, content_type="application/json")
+            except Exception as e:
+                print(f"⚠️ GCS forex save error: {e}")
+
+        print(f"📝 Forex trade: {action} {direction} {units} {symbol} @ {price:.3f}")
+        return trade
 
     def get_all_trades(self, days: int = None) -> List[Dict]:
         """

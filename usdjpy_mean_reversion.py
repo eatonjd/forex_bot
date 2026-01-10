@@ -34,6 +34,7 @@ from oandapyV20.endpoints.trades import TradesList
 import pandas as pd
 
 from utils.mean_reversion import MeanReversionStrategy
+from utils.trade_logger import TradeLogger
 
 
 def is_forex_market_open() -> tuple:
@@ -305,6 +306,19 @@ class USDJPYMeanReversionBot:
                 }
             )
 
+            # Log trade to GCS for analysis
+            try:
+                logger = TradeLogger()
+                logger.log_forex_trade(
+                    action="OPEN",
+                    direction="LONG" if direction == "BUY" else "SHORT",
+                    units=units,
+                    price=price,
+                    account_type=self.mode,
+                )
+            except Exception as log_err:
+                print(f"⚠️ Trade log error: {log_err}")
+
             return True, price
         except Exception as e:
             print(f"❌ Order error: {e}")
@@ -353,6 +367,19 @@ class USDJPYMeanReversionBot:
                     "type": "CLOSE",
                 }
             )
+
+            # Log trade to GCS for analysis
+            try:
+                logger = TradeLogger()
+                logger.log_forex_trade(
+                    action="CLOSE",
+                    direction="LONG" if pos_dir == 1 else "SHORT",
+                    units=pos_units,
+                    pnl=pnl,
+                    account_type=self.mode,
+                )
+            except Exception as log_err:
+                print(f"⚠️ Trade log error: {log_err}")
 
             self.daily_pnl += pnl
             self.scale_in_count = 0  # Reset pyramiding count
