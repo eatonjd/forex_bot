@@ -159,10 +159,10 @@ def dashboard():
         demo_data["nav"] = float(demo_acc["NAV"])
         demo_data["unrealized_pl"] = float(demo_acc["unrealizedPL"])
 
-        # Demo trades
+        # Demo trades - get all
         trades_r = TradesList(
             accountID=os.getenv("OANDA_ACCOUNT_ID"),
-            params={"instrument": "USD_JPY", "state": "ALL", "count": 20},
+            params={"instrument": "USD_JPY", "state": "ALL", "count": 100},
         )
         demo_api.request(trades_r)
         demo_data["trades"] = trades_r.response.get("trades", [])
@@ -255,6 +255,14 @@ def dashboard():
             .footer {{ text-align: center; color: #666; margin-top: 30px; font-size: 0.85rem; }}
             .dual-account {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
             @media (max-width: 600px) {{ .dual-account {{ grid-template-columns: 1fr; }} }}
+            .section-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }}
+            .filter-select {{ background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #e4e4e4; padding: 8px 12px; border-radius: 8px; font-size: 0.9rem; cursor: pointer; }}
+            .filter-select:focus {{ outline: none; border-color: #00d9ff; }}
+            .trades-scroll {{ max-height: 400px; overflow-y: auto; }}
+            .trades-scroll::-webkit-scrollbar {{ width: 8px; }}
+            .trades-scroll::-webkit-scrollbar-track {{ background: rgba(255,255,255,0.05); border-radius: 4px; }}
+            .trades-scroll::-webkit-scrollbar-thumb {{ background: rgba(0,217,255,0.3); border-radius: 4px; }}
+            .trades-scroll::-webkit-scrollbar-thumb:hover {{ background: rgba(0,217,255,0.5); }}
         </style>
     </head>
     <body>
@@ -303,15 +311,24 @@ def dashboard():
             </div>
             
             <div class="section">
-                <div class="section-title">📋 Recent Trades (Demo)</div>
-                <table>
-                    <thead>
-                        <tr><th>Date</th><th>Direction</th><th>Units</th><th>Entry</th><th>P/L</th><th>Status</th></tr>
-                    </thead>
-                    <tbody>
+                <div class="section-header">
+                    <div class="section-title">📋 All Demo Trades</div>
+                    <select id="tradeFilter" onchange="filterTrades()" class="filter-select">
+                        <option value="all">All Trades ({len(demo_trades)})</option>
+                        <option value="winners">Winners ({wins})</option>
+                        <option value="losers">Losers ({losses})</option>
+                        <option value="open">Open</option>
+                    </select>
+                </div>
+                <div class="trades-scroll">
+                    <table id="tradesTable">
+                        <thead>
+                            <tr><th>Date</th><th>Direction</th><th>Units</th><th>Entry</th><th>P/L</th><th>Status</th></tr>
+                        </thead>
+                        <tbody>
     '''
 
-    for trade in demo_trades[:10]:
+    for trade in demo_trades:
         open_time = trade.get("openTime", "")[:10]
         units = int(float(trade.get("initialUnits", trade.get("currentUnits", 0))))
         direction = "LONG" if units > 0 else "SHORT"
@@ -323,26 +340,49 @@ def dashboard():
             pnl = float(trade.get("realizedPL", 0))
             pnl_class = "positive" if pnl >= 0 else "negative"
             badge = "badge-win" if pnl >= 0 else "badge-loss"
+            row_class = "winner" if pnl >= 0 else "loser"
         else:
             pnl = float(trade.get("unrealizedPL", 0))
             pnl_class = "positive" if pnl >= 0 else "negative"
             badge = "badge-open"
+            row_class = "open"
 
         html += f'''
-                        <tr>
-                            <td>{open_time}</td>
-                            <td>{direction}</td>
-                            <td>{units:,}</td>
-                            <td>{entry:.3f}</td>
-                            <td class="{pnl_class}">${pnl:+.2f}</td>
-                            <td><span class="badge {badge}">{state}</span></td>
-                        </tr>
+                            <tr class="trade-row {row_class}">
+                                <td>{open_time}</td>
+                                <td>{direction}</td>
+                                <td>{units:,}</td>
+                                <td>{entry:.3f}</td>
+                                <td class="{pnl_class}">${pnl:+.2f}</td>
+                                <td><span class="badge {badge}">{state}</span></td>
+                            </tr>
         '''
 
     html += f"""
-                    </tbody>
-                </table>
+                        </tbody>
+                    </table>
+                </div>
             </div>
+            
+            <script>
+            function filterTrades() {{
+                const filter = document.getElementById('tradeFilter').value;
+                const rows = document.querySelectorAll('.trade-row');
+                rows.forEach(row => {{
+                    if (filter === 'all') {{
+                        row.style.display = '';
+                    }} else if (filter === 'winners' && row.classList.contains('winner')) {{
+                        row.style.display = '';
+                    }} else if (filter === 'losers' && row.classList.contains('loser')) {{
+                        row.style.display = '';
+                    }} else if (filter === 'open' && row.classList.contains('open')) {{
+                        row.style.display = '';
+                    }} else {{
+                        row.style.display = 'none';
+                    }}
+                }});
+            }}
+            </script>
             
             <div class="section">
                 <div class="section-title">🎯 Go-Live Criteria</div>
