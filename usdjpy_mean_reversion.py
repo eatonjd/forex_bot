@@ -110,8 +110,8 @@ class USDJPYMeanReversionBot:
 
         # Risk management
         self.risk_percent = 0.02  # 2% risk per trade
-        self.daily_target = 100  # $100 - triggers trailing stop
-        self.trailing_amount = 50  # $50 - close if profit drops this much from peak
+        self.daily_target = 50  # $50 - triggers trailing stop
+        self.trailing_amount = 20  # $20 - close if profit drops this much from peak
         self.daily_pnl = 0
         self.max_daily_loss = -200  # Stop trading if down $200
 
