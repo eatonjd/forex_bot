@@ -137,6 +137,96 @@ def status():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+def _generate_live_trades_html(live_trades):
+    """Generate HTML for live trades section."""
+    live_closed = [t for t in live_trades if t.get("state") == "CLOSED"]
+    live_wins = len([t for t in live_closed if float(t.get("realizedPL", 0)) > 0])
+    live_losses = len(live_closed) - live_wins
+
+    html = f"""
+            <div class="section">
+                <div class="section-header">
+                    <div class="section-title">💵 All Live Trades</div>
+                    <select id="liveTradeFilter" onchange="filterLiveTrades()" class="filter-select">
+                        <option value="all">All ({len(live_trades)})</option>
+                        <option value="winners">Winners ({live_wins})</option>
+                        <option value="losers">Losers ({live_losses})</option>
+                        <option value="open">Open</option>
+                    </select>
+                </div>
+                <div class="trades-scroll">
+                    <table>
+                        <thead>
+                            <tr><th>Date</th><th>Dir</th><th>Units</th><th>Entry</th><th>P/L</th><th>Status</th></tr>
+                        </thead>
+                        <tbody>
+    """
+
+    for trade in live_trades:
+        open_time = trade.get("openTime", "")[:10]
+        units = int(float(trade.get("initialUnits", trade.get("currentUnits", 0))))
+        direction = "LONG" if units > 0 else "SHORT"
+        units = abs(units)
+        entry = float(trade.get("price", 0))
+        state = trade.get("state", "")
+
+        if state == "CLOSED":
+            pnl = float(trade.get("realizedPL", 0))
+            pnl_class = "positive" if pnl >= 0 else "negative"
+            badge = "badge-win" if pnl >= 0 else "badge-loss"
+            row_class = "winner" if pnl >= 0 else "loser"
+        else:
+            pnl = float(trade.get("unrealizedPL", 0))
+            pnl_class = "positive" if pnl >= 0 else "negative"
+            badge = "badge-open"
+            row_class = "open"
+
+        html += f'''
+                            <tr class="live-trade-row {row_class}">
+                                <td>{open_time}</td>
+                                <td>{direction}</td>
+                                <td>{units:,}</td>
+                                <td>{entry:.3f}</td>
+                                <td class="{pnl_class}">${pnl:+.2f}</td>
+                                <td><span class="badge {badge}">{state}</span></td>
+                            </tr>
+        '''
+
+    if not live_trades:
+        html += """
+                            <tr><td colspan="6" style="text-align:center; color:#888;">No live trades yet</td></tr>
+        """
+
+    # Use double braces for JavaScript curly braces in f-string
+    html += """
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <script>
+            function filterLiveTrades() {
+                const filter = document.getElementById('liveTradeFilter').value;
+                const rows = document.querySelectorAll('.live-trade-row');
+                rows.forEach(row => {
+                    if (filter === 'all') {
+                        row.style.display = '';
+                    } else if (filter === 'winners' && row.classList.contains('winner')) {
+                        row.style.display = '';
+                    } else if (filter === 'losers' && row.classList.contains('loser')) {
+                        row.style.display = '';
+                    } else if (filter === 'open' && row.classList.contains('open')) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
+                });
+            }
+            </script>
+    """
+    return html
+
+
 @app.route("/dashboard")
 def dashboard():
     """Public trading dashboard - shareable web page"""
@@ -383,12 +473,22 @@ def dashboard():
                 }});
             }}
             </script>
-            
+    '''
+    
+    # Add live trades section
+    html += _generate_live_trades_html(live_data.get("trades", []))
+    
+    # Build go-live criteria
+    total_trades_check = "✅" if len(closed_trades) >= 30 else "🟡"
+    win_rate_check = "✅" if win_rate >= 55 else "❌"
+    updated_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    html += f'''
             <div class="section">
                 <div class="section-title">🎯 Go-Live Criteria</div>
                 <table>
-                    <tr><td>Total Trades</td><td>{len(closed_trades)}/30</td><td>{"✅" if len(closed_trades) >= 30 else "🟡"}</td></tr>
-                    <tr><td>Win Rate</td><td>{win_rate:.1f}%</td><td>{"✅" if win_rate >= 55 else "❌"}</td></tr>
+                    <tr><td>Total Trades</td><td>{len(closed_trades)}/30</td><td>{total_trades_check}</td></tr>
+                    <tr><td>Win Rate</td><td>{win_rate:.1f}%</td><td>{win_rate_check}</td></tr>
                     <tr><td>Profitable Weeks</td><td>3/3</td><td>✅</td></tr>
                     <tr><td>NFP Survived</td><td>Jan 9</td><td>✅</td></tr>
                     <tr><td>Max Drawdown</td><td>&lt;10%</td><td>✅</td></tr>
