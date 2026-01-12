@@ -478,17 +478,13 @@ def dashboard():
     # Add live trades section
     html += _generate_live_trades_html(live_data.get("trades", []))
     
-    # Build go-live criteria - inline conditionals to avoid scope issues
-    num_closed = len(closed_trades)
-    trades_check = "✅" if num_closed >= 30 else "🟡"
-    wr_check = "✅" if win_rate >= 55 else "❌"
-    
-    html += f'''
+    # Build go-live criteria using string concatenation to avoid scope issues
+    html += '''
             <div class="section">
                 <div class="section-title">🎯 Go-Live Criteria</div>
                 <table>
-                    <tr><td>Total Trades</td><td>{num_closed}/30</td><td>{trades_check}</td></tr>
-                    <tr><td>Win Rate</td><td>{win_rate:.1f}%</td><td>{wr_check}</td></tr>
+                    <tr><td>Total Trades</td><td>''' + str(len(closed_trades)) + '''/30</td><td>''' + ("✅" if len(closed_trades) >= 30 else "🟡") + '''</td></tr>
+                    <tr><td>Win Rate</td><td>''' + f"{win_rate:.1f}" + '''%</td><td>''' + ("✅" if win_rate >= 55 else "❌") + '''</td></tr>
                     <tr><td>Profitable Weeks</td><td>3/3</td><td>✅</td></tr>
                     <tr><td>NFP Survived</td><td>Jan 9</td><td>✅</td></tr>
                     <tr><td>Max Drawdown</td><td>&lt;10%</td><td>✅</td></tr>
