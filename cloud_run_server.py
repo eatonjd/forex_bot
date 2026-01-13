@@ -138,30 +138,21 @@ def status():
 
 
 def _generate_live_trades_html(live_trades):
-    """Generate HTML for live trades section."""
-    live_closed = [t for t in live_trades if t.get("state") == "CLOSED"]
-    live_wins = len([t for t in live_closed if float(t.get("realizedPL", 0)) > 0])
-    live_losses = len(live_closed) - live_wins
-
-    html = f"""
+    """Helper to generate HTML for live trades table"""
+    if not live_trades:
+        return """
             <div class="section">
-                <div class="section-header">
-                    <div class="section-title">💵 All Live Trades</div>
-                    <select id="liveTradeFilter" onchange="filterLiveTrades()" class="filter-select">
-                        <option value="all">All ({len(live_trades)})</option>
-                        <option value="winners">Winners ({live_wins})</option>
-                        <option value="losers">Losers ({live_losses})</option>
-                        <option value="open">Open</option>
-                    </select>
-                </div>
-                <div class="trades-scroll">
-                    <table>
-                        <thead>
-                            <tr><th>Date</th><th>Dir</th><th>Units</th><th>Entry</th><th>P/L</th><th>Status</th></tr>
-                        </thead>
-                        <tbody>
-    """
+                <div class="section-title">🔴 Live Account Status</div>
+                <p style="text-align:center; color:#888; padding: 20px;">No live trades yet</p>
+            </div>
+        """
 
+    live_wins = len([t for t in live_trades if float(t.get("realizedPL", 0)) > 0])
+    live_losses = (
+        len([t for t in live_trades if t.get("state") == "CLOSED"]) - live_wins
+    )
+
+    rows_html = ""
     for trade in live_trades:
         open_time = trade.get("openTime", "")[:10]
         units = int(float(trade.get("initialUnits", trade.get("currentUnits", 0))))
@@ -181,50 +172,60 @@ def _generate_live_trades_html(live_trades):
             badge = "badge-open"
             row_class = "open"
 
-        html += f'''
-                            <tr class="live-trade-row {row_class}">
-                                <td>{open_time}</td>
-                                <td>{direction}</td>
-                                <td>{units:,}</td>
-                                <td>{entry:.3f}</td>
-                                <td class="{pnl_class}">${pnl:+.2f}</td>
-                                <td><span class="badge {badge}">{state}</span></td>
-                            </tr>
+        rows_html += f'''
+            <tr class="live-trade-row {row_class}">
+                <td>{open_time}</td>
+                <td>{direction}</td>
+                <td>{units:,}</td>
+                <td>{entry:.3f}</td>
+                <td class="{pnl_class}">${pnl:+.2f}</td>
+                <td><span class="badge {badge}">{state}</span></td>
+            </tr>
         '''
 
-    if not live_trades:
-        html += """
-                            <tr><td colspan="6" style="text-align:center; color:#888;">No live trades yet</td></tr>
-        """
-
-    # Use double braces for JavaScript curly braces in f-string
-    html += """
+    return f"""
+            <div class="section">
+                <div class="section-header">
+                    <div class="section-title">🔴 Live Account Activity</div>
+                    <select id="liveTradeFilter" onchange="filterLiveTrades()" class="filter-select">
+                        <option value="all">All ({len(live_trades)})</option>
+                        <option value="winners">Winners ({live_wins})</option>
+                        <option value="losers">Losers ({live_losses})</option>
+                        <option value="open">Open</option>
+                    </select>
+                </div>
+                <div class="trades-scroll">
+                    <table>
+                        <thead>
+                            <tr><th>Date</th><th>Dir</th><th>Units</th><th>Entry</th><th>P/L</th><th>Status</th></tr>
+                        </thead>
+                        <tbody>
+                            {rows_html}
                         </tbody>
                     </table>
                 </div>
             </div>
             
             <script>
-            function filterLiveTrades() {
+            function filterLiveTrades() {{
                 const filter = document.getElementById('liveTradeFilter').value;
                 const rows = document.querySelectorAll('.live-trade-row');
-                rows.forEach(row => {
-                    if (filter === 'all') {
+                rows.forEach(row => {{
+                    if (filter === 'all') {{
                         row.style.display = '';
-                    } else if (filter === 'winners' && row.classList.contains('winner')) {
+                    }} else if (filter === 'winners' && row.classList.contains('winner')) {{
                         row.style.display = '';
-                    } else if (filter === 'losers' && row.classList.contains('loser')) {
+                    }} else if (filter === 'losers' && row.classList.contains('loser')) {{
                         row.style.display = '';
-                    } else if (filter === 'open' && row.classList.contains('open')) {
+                    }} else if (filter === 'open' && row.classList.contains('open')) {{
                         row.style.display = '';
-                    } else {
+                    }} else {{
                         row.style.display = 'none';
-                    }
-                });
-            }
+                    }}
+                }});
+            }}
             </script>
     """
-    return html
 
 
 @app.route("/dashboard")
@@ -249,7 +250,7 @@ def dashboard():
         demo_data["nav"] = float(demo_acc["NAV"])
         demo_data["unrealized_pl"] = float(demo_acc["unrealizedPL"])
 
-        # Demo trades - get all
+        # Demo trades
         trades_r = TradesList(
             accountID=os.getenv("OANDA_ACCOUNT_ID"),
             params={"instrument": "USD_JPY", "state": "ALL", "count": 100},
@@ -269,7 +270,6 @@ def dashboard():
             live_api.request(live_r)
             live_acc = live_r.response["account"]
             live_data["balance"] = float(live_acc["balance"])
-            live_data["nav"] = float(live_acc["NAV"])
             live_data["unrealized_pl"] = float(live_acc["unrealizedPL"])
 
             # Live trades
@@ -282,18 +282,61 @@ def dashboard():
     except Exception as e:
         live_data["error"] = str(e)
 
-    # Calculate stats
-    demo_trades = demo_data["trades"]
-    closed_trades = [t for t in demo_trades if t.get("state") == "CLOSED"]
-    wins = len([t for t in closed_trades if float(t.get("realizedPL", 0)) > 0])
-    losses = len(closed_trades) - wins
-    total_pl = sum(float(t.get("realizedPL", 0)) for t in closed_trades)
-    win_rate = (wins / len(closed_trades) * 100) if closed_trades else 0
+    # Load trades from logger for summary stats
+    try:
+        from utils.trade_logger import TradeLogger
 
-    # Starting balance
+        logger = TradeLogger()
+        all_trades = logger.get_all_trades()
+        closed_trades = [t for t in all_trades if t.get("action") == "CLOSE"]
+        wins = len([t for t in closed_trades if (t.get("pnl") or 0) > 0])
+        total_pl = sum(float(t.get("pnl", 0)) for t in closed_trades)
+        win_rate = (wins / len(closed_trades) * 100) if closed_trades else 0
+    except:
+        closed_trades = []
+        wins = 0
+        total_pl = 0
+        win_rate = 0
+
+    losses = len(closed_trades) - wins
     start_balance = 5000
     pct_return = ((demo_data["balance"] - start_balance) / start_balance) * 100
 
+    # Pre-render demo trades rows
+    demo_trades_rows = ""
+    demo_trades = demo_data.get("trades", [])
+    for trade in demo_trades:
+        open_time = trade.get("openTime", "")[:10]
+        units_val = int(float(trade.get("initialUnits", trade.get("currentUnits", 0))))
+        direction = "LONG" if units_val > 0 else "SHORT"
+        entry_price = float(trade.get("price", 0))
+        state = trade.get("state", "")
+
+        if state == "CLOSED":
+            pnl_val = float(trade.get("realizedPL", 0))
+            pnl_class = "positive" if pnl_val >= 0 else "negative"
+            badge = "badge-win" if pnl_val >= 0 else "badge-loss"
+            row_class = "winner" if pnl_val >= 0 else "loser"
+        else:
+            pnl_val = float(trade.get("unrealizedPL", 0))
+            pnl_class = "positive" if pnl_val >= 0 else "negative"
+            badge = "badge-open"
+            row_class = "open"
+
+        demo_trades_rows += f'''
+            <tr class="trade-row {row_class}">
+                <td>{open_time}</td>
+                <td>{direction}</td>
+                <td>{abs(units_val):,}</td>
+                <td>{entry_price:.3f}</td>
+                <td class="{pnl_class}">${pnl_val:+.2f}</td>
+                <td><span class="badge {badge}">{state}</span></td>
+            </tr>
+        '''
+
+    live_trades_html = _generate_live_trades_html(live_data.get("trades", []))
+
+    # Final HTML template
     html = f'''
     <!DOCTYPE html>
     <html>
@@ -307,7 +350,7 @@ def dashboard():
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
                 color: #e4e4e4;
-                min-height: 100vh;
+                min-height: 10vh;
                 padding: 20px;
             }}
             .container {{ max-width: 900px; margin: 0 auto; }}
@@ -318,6 +361,7 @@ def dashboard():
                 background: linear-gradient(90deg, #00d9ff, #00ff88);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
+                background-clip: text;
             }}
             .subtitle {{ text-align: center; color: #888; margin-bottom: 30px; }}
             .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }}
@@ -381,25 +425,21 @@ def dashboard():
             
             <div class="dual-account">
                 <div class="section">
-                    <div class="section-title">📊 Demo Account</div>
+                    <div class="section-title">📊 Demo Status</div>
                     <table>
-                        <tr><td>Balance</td><td>${demo_data["balance"]:,.2f}</td></tr>
                         <tr><td>NAV</td><td>${demo_data["nav"]:,.2f}</td></tr>
                         <tr><td>Unrealized P/L</td><td class="{"positive" if demo_data["unrealized_pl"] >= 0 else "negative"}">${demo_data["unrealized_pl"]:+,.2f}</td></tr>
-                        <tr><td>Trades</td><td>{len(closed_trades)} closed ({wins}W/{losses}L)</td></tr>
                     </table>
                 </div>
                 <div class="section">
-                    <div class="section-title">💵 Live Account (Slippage Test)</div>
+                    <div class="section-title">💵 Live Status</div>
                     <table>
                         <tr><td>Balance</td><td>${live_data["balance"]:,.2f}</td></tr>
-                        <tr><td>NAV</td><td>${live_data["nav"]:,.2f}</td></tr>
                         <tr><td>Unrealized P/L</td><td class="{"positive" if live_data["unrealized_pl"] >= 0 else "negative"}">${live_data["unrealized_pl"]:+,.2f}</td></tr>
-                        <tr><td>Trades</td><td>{len([t for t in live_data["trades"] if t.get("state") == "CLOSED"])} closed</td></tr>
                     </table>
                 </div>
             </div>
-            
+
             <div class="section">
                 <div class="section-header">
                     <div class="section-title">📋 All Demo Trades</div>
@@ -416,44 +456,25 @@ def dashboard():
                             <tr><th>Date</th><th>Direction</th><th>Units</th><th>Entry</th><th>P/L</th><th>Status</th></tr>
                         </thead>
                         <tbody>
-    '''
-
-    for trade in demo_trades:
-        open_time = trade.get("openTime", "")[:10]
-        units = int(float(trade.get("initialUnits", trade.get("currentUnits", 0))))
-        direction = "LONG" if units > 0 else "SHORT"
-        units = abs(units)
-        entry = float(trade.get("price", 0))
-        state = trade.get("state", "")
-
-        if state == "CLOSED":
-            pnl = float(trade.get("realizedPL", 0))
-            pnl_class = "positive" if pnl >= 0 else "negative"
-            badge = "badge-win" if pnl >= 0 else "badge-loss"
-            row_class = "winner" if pnl >= 0 else "loser"
-        else:
-            pnl = float(trade.get("unrealizedPL", 0))
-            pnl_class = "positive" if pnl >= 0 else "negative"
-            badge = "badge-open"
-            row_class = "open"
-
-        html += f'''
-                            <tr class="trade-row {row_class}">
-                                <td>{open_time}</td>
-                                <td>{direction}</td>
-                                <td>{units:,}</td>
-                                <td>{entry:.3f}</td>
-                                <td class="{pnl_class}">${pnl:+.2f}</td>
-                                <td><span class="badge {badge}">{state}</span></td>
-                            </tr>
-        '''
-
-    html += f"""
+                            {demo_trades_rows}
                         </tbody>
                     </table>
                 </div>
             </div>
-            
+
+            {live_trades_html}
+
+            <div class="section">
+                <div class="section-title">🎯 Go-Live Criteria</div>
+                <table>
+                    <tr><td>Total Trades</td><td>{len(closed_trades)}/30</td><td>{"✅" if len(closed_trades) >= 30 else "🟡"}</td></tr>
+                    <tr><td>Win Rate</td><td>{win_rate:.1f}%</td><td>{"✅" if win_rate >= 55 else "❌"}</td></tr>
+                    <tr><td>Profitable Weeks</td><td>3/3</td><td>✅</td></tr>
+                    <tr><td>NFP Survived</td><td>Jan 9</td><td>✅</td></tr>
+                    <tr><td>Max Drawdown</td><td>&lt;10%</td><td>✅</td></tr>
+                </table>
+            </div>
+
             <script>
             function filterTrades() {{
                 const filter = document.getElementById('tradeFilter').value;
@@ -473,24 +494,7 @@ def dashboard():
                 }});
             }}
             </script>
-    '''
-    
-    # Add live trades section
-    html += _generate_live_trades_html(live_data.get("trades", []))
-    
-    # Build go-live criteria using string concatenation to avoid scope issues
-    html += '''
-            <div class="section">
-                <div class="section-title">🎯 Go-Live Criteria</div>
-                <table>
-                    <tr><td>Total Trades</td><td>''' + str(len(closed_trades)) + '''/30</td><td>''' + ("✅" if len(closed_trades) >= 30 else "🟡") + '''</td></tr>
-                    <tr><td>Win Rate</td><td>''' + f"{win_rate:.1f}" + '''%</td><td>''' + ("✅" if win_rate >= 55 else "❌") + '''</td></tr>
-                    <tr><td>Profitable Weeks</td><td>3/3</td><td>✅</td></tr>
-                    <tr><td>NFP Survived</td><td>Jan 9</td><td>✅</td></tr>
-                    <tr><td>Max Drawdown</td><td>&lt;10%</td><td>✅</td></tr>
-                </table>
-            </div>
-            
+
             <div class="footer">
                 <p>Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC</p>
                 <p>Strategy: Mean Reversion (Bollinger Bands + RSI) • Timeframe: M15</p>
@@ -498,7 +502,7 @@ def dashboard():
         </div>
     </body>
     </html>
-    """
+    '''
 
     return html
 

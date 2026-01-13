@@ -105,6 +105,12 @@ class ParallelTradingBot:
         # Slippage tracker
         self.tracker = SlippageTracker()
 
+        # Safety Settings (Synced with usdjpy_mean_reversion.py)
+        self.daily_target = self.demo_bot.daily_target
+        self.stop_loss_pips = self.demo_bot.stop_loss_pips
+        self.max_daily_loss = self.demo_bot.max_daily_loss
+        self.daily_pnl = 0
+
         print("\n" + "=" * 60)
         print("🔀 PARALLEL TRADING BOT (Demo + Live)")
         print("=" * 60)
@@ -301,6 +307,36 @@ class ParallelTradingBot:
                 f"   📊 Live: {'LONG' if live_pos == 1 else 'SHORT'} | P/L: ${live_pnl:+.2f}"
             )
 
+        # Safety Checks (Realized + Unrealized)
+        combined_unrealized = demo_pnl  # We use demo as the source of truth for safety
+        total_pnl = self.daily_pnl + combined_unrealized
+
+        # 1. Daily Loss Limit
+        if total_pnl <= self.max_daily_loss:
+            print(f"🛑 DAILY LOSS LIMIT HIT! Combined P/L: ${total_pnl:+.2f}")
+            if demo_pos != 0:
+                print("   ⚠️ Closing BOTH accounts due to loss limit...")
+                self.demo_bot.close_position()
+                self.live_bot.close_position()
+            return
+
+        # 2. Stop Loss (Pip-based)
+        if demo_pos != 0:
+            # We use demo_bot for entry_price
+            _, _, entry_price, _ = self.demo_bot.get_current_position()
+            pip_size = 0.01  # USD/JPY
+
+            if demo_pos == 1:  # LONG
+                drawdown_pips = (entry_price - current_price) / pip_size
+            else:  # SHORT
+                drawdown_pips = (current_price - entry_price) / pip_size
+
+            if drawdown_pips >= self.stop_loss_pips:
+                print(f"🛑 STOP LOSS HIT! Drawdown: {drawdown_pips:.1f} pips")
+                self.demo_bot.close_position()
+                self.live_bot.close_position()
+                return
+
         # Execute on both accounts if signal is actionable
         if signal in ("BUY", "SELL") and confidence >= 50:
             print(f"\n🔀 Executing {signal} on BOTH accounts...")
@@ -315,7 +351,9 @@ class ParallelTradingBot:
                 signal == "SELL" and demo_pos == 1
             ):
                 print("   Closing demo position...")
-                self.demo_bot.close_position()
+                success, pnl = self.demo_bot.close_position()
+                if success:
+                    self.daily_pnl += pnl
 
             if (signal == "BUY" and live_pos == -1) or (
                 signal == "SELL" and live_pos == 1
