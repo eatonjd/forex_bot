@@ -122,6 +122,15 @@ class USDJPYMeanReversionBot:
         self.min_profit_to_add = 25  # Must be $25+ in profit to add
         self.scale_in_size_pct = 0.5  # Scale-ins are 50% of initial size
 
+        # Probe Entry Settings (Start small, confirm before full size)
+        self.use_probe_entry = True  # Enable probe mode
+        self.probe_size_pct = 0.40  # Initial entry is 40% of full size
+        self.probe_confirm_profit = 25  # Need +$25 to confirm and scale up
+        self.probe_max_candles = 3  # Exit probe if not confirmed in 3 candles
+        self.probe_entry_candle = 0  # Track candle count when probe was entered
+        self.is_probe_position = False  # Is current position a probe?
+        self.candle_count = 0  # Running candle counter
+
         # Trailing stop tracking
         self.trailing_active = False  # Becomes True when profit >= daily_target
         self.peak_profit = 0  # Highest profit seen while trailing
@@ -493,17 +502,73 @@ class USDJPYMeanReversionBot:
                 self.close_position()
                 return
 
+        # Increment candle counter
+        self.candle_count += 1
+
+        # *** PROBE ENTRY MANAGEMENT ***
+        # Check if we have a probe position that needs confirmation or timeout
+        if self.is_probe_position and pos_dir != 0:
+            candles_since_entry = self.candle_count - self.probe_entry_candle
+
+            # Check for confirmation (scale up to full size)
+            if unrealized_pnl >= self.probe_confirm_profit:
+                base_units = self.calculate_position_size()
+                remaining_units = int(base_units * (1 - self.probe_size_pct))
+                direction = "BUY" if pos_dir == 1 else "SELL"
+                print(
+                    f"✅ PROBE CONFIRMED! Scaling up with {remaining_units} units (+${unrealized_pnl:.2f})"
+                )
+                self.open_position(direction, remaining_units)
+                self.is_probe_position = False  # Now it's a full position
+                send_notification(
+                    f"✅ USD/JPY Probe confirmed! Scaled to full size (+${unrealized_pnl:.2f})"
+                )
+
+            # Check for timeout (exit if not profitable after max candles)
+            elif candles_since_entry >= self.probe_max_candles:
+                if unrealized_pnl < 0:
+                    print(
+                        f"⏱️ PROBE TIMEOUT! Closing after {candles_since_entry} candles (P/L: ${unrealized_pnl:+.2f})"
+                    )
+                    self.close_position()
+                    self.is_probe_position = False
+                    send_notification(
+                        f"⏱️ USD/JPY Probe timed out. Closed for ${unrealized_pnl:+.2f}"
+                    )
+                    return
+                else:
+                    # Profitable but not confirmed - keep holding, disable timeout
+                    print(f"📊 Probe profitable but not confirmed. Holding...")
+                    self.is_probe_position = False  # Treat as regular position now
+
         # Execute trades
         if signal == "BUY" and confidence >= 50:
             if pos_dir == -1:  # Close short first
                 self.close_position()
                 self.scale_in_count = 0  # Reset scale-in count
+                self.is_probe_position = False
 
             if pos_dir != 1:  # Open long if not already
-                units = self.calculate_position_size()
-                self.open_position("BUY", units)
+                base_units = self.calculate_position_size()
+                if self.use_probe_entry:
+                    # Probe entry: start with reduced size
+                    probe_units = int(base_units * self.probe_size_pct)
+                    print(
+                        f"🔍 PROBE ENTRY: Opening LONG with {probe_units} units (40% size)"
+                    )
+                    self.open_position("BUY", probe_units)
+                    self.is_probe_position = True
+                    self.probe_entry_candle = self.candle_count
+                    send_notification(
+                        f"🔍 USD/JPY Probe LONG: {probe_units} units (40% size)"
+                    )
+                else:
+                    # Standard full-size entry
+                    self.open_position("BUY", base_units)
                 self.scale_in_count = 0
-            elif pos_dir == 1:  # Already long - consider pyramiding
+            elif (
+                pos_dir == 1 and not self.is_probe_position
+            ):  # Already long (full) - consider pyramiding
                 if (
                     unrealized_pnl >= self.min_profit_to_add
                     and self.scale_in_count < self.max_scale_ins
@@ -524,12 +589,29 @@ class USDJPYMeanReversionBot:
             if pos_dir == 1:  # Close long first
                 self.close_position()
                 self.scale_in_count = 0  # Reset scale-in count
+                self.is_probe_position = False
 
             if pos_dir != -1:  # Open short if not already
-                units = self.calculate_position_size()
-                self.open_position("SELL", units)
+                base_units = self.calculate_position_size()
+                if self.use_probe_entry:
+                    # Probe entry: start with reduced size
+                    probe_units = int(base_units * self.probe_size_pct)
+                    print(
+                        f"🔍 PROBE ENTRY: Opening SHORT with {probe_units} units (40% size)"
+                    )
+                    self.open_position("SELL", probe_units)
+                    self.is_probe_position = True
+                    self.probe_entry_candle = self.candle_count
+                    send_notification(
+                        f"🔍 USD/JPY Probe SHORT: {probe_units} units (40% size)"
+                    )
+                else:
+                    # Standard full-size entry
+                    self.open_position("SELL", base_units)
                 self.scale_in_count = 0
-            elif pos_dir == -1:  # Already short - consider pyramiding
+            elif (
+                pos_dir == -1 and not self.is_probe_position
+            ):  # Already short (full) - consider pyramiding
                 if (
                     unrealized_pnl >= self.min_profit_to_add
                     and self.scale_in_count < self.max_scale_ins
