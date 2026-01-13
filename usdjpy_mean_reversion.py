@@ -113,7 +113,8 @@ class USDJPYMeanReversionBot:
         self.daily_target = 50  # $50 - triggers trailing stop
         self.trailing_amount = 20  # $20 - close if profit drops this much from peak
         self.daily_pnl = 0
-        self.max_daily_loss = -200  # Stop trading if down $200
+        self.max_daily_loss = -200  # Stop trading if down $200 (including open trades)
+        self.stop_loss_pips = 50  # Hard stop loss in pips
 
         # Pyramiding / Scale-in settings
         self.max_scale_ins = 3  # Max positions to add (total 4 including initial)
@@ -461,14 +462,36 @@ class USDJPYMeanReversionBot:
                         )
                     return
 
-        # Check daily limits (realized P/L)
+        # Check daily target (Realized P/L)
         if self.daily_pnl >= self.daily_target:
             print(f"🎯 Daily target reached! P/L: ${self.daily_pnl:+.2f}")
             return
 
-        if self.daily_pnl <= self.max_daily_loss:
-            print(f"🛑 Daily loss limit hit! P/L: ${self.daily_pnl:+.2f}")
+        # Check daily limits (Realized + Unrealized)
+        total_pnl = self.daily_pnl + unrealized_pnl
+        if total_pnl <= self.max_daily_loss:
+            print(
+                f"🛑 Daily loss limit hit! P/L: ${total_pnl:+.2f} (Max: ${self.max_daily_loss})"
+            )
+            if pos_dir != 0:
+                print("⚠️ Closing open position due to loss limit.")
+                self.close_position()
             return
+
+        # Check for hard Stop Loss (Pip-based)
+        if pos_dir != 0:
+            pip_size = 0.01  # USD/JPY pip size
+            if pos_dir == 1:  # LONG
+                drawdown_pips = (entry_price - current_price) / pip_size
+            else:  # SHORT
+                drawdown_pips = (current_price - entry_price) / pip_size
+
+            if drawdown_pips >= self.stop_loss_pips:
+                print(
+                    f"🛑 STOP LOSS HIT! Drawdown: {drawdown_pips:.1f} pips (Max: {self.stop_loss_pips})"
+                )
+                self.close_position()
+                return
 
         # Execute trades
         if signal == "BUY" and confidence >= 50:
