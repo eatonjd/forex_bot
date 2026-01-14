@@ -111,6 +111,15 @@ class ParallelTradingBot:
         self.max_daily_loss = self.demo_bot.max_daily_loss
         self.daily_pnl = 0
 
+        # Probe Entry Settings (Synced)
+        self.use_probe_entry = self.demo_bot.use_probe_entry
+        self.probe_size_pct = self.demo_bot.probe_size_pct
+        self.probe_confirm_profit = self.demo_bot.probe_confirm_profit
+        self.probe_max_candles = self.demo_bot.probe_max_candles
+        self.probe_entry_candle = 0
+        self.is_probe_position = False
+        self.candle_count = 0
+
         print("\n" + "=" * 60)
         print("🔀 PARALLEL TRADING BOT (Demo + Live)")
         print("=" * 60)
@@ -129,7 +138,6 @@ class ParallelTradingBot:
     def _create_live_bot(self):
         """Create a live trading bot instance."""
         from oandapyV20 import API
-        from utils.mean_reversion import MeanReversionStrategy
 
         # Create a minimal live bot
         class LiveBot:
@@ -335,16 +343,59 @@ class ParallelTradingBot:
                 print(f"🛑 STOP LOSS HIT! Drawdown: {drawdown_pips:.1f} pips")
                 self.demo_bot.close_position()
                 self.live_bot.close_position()
+                self.is_probe_position = False
                 return
+
+        # Increment candle counter
+        self.candle_count += 1
+
+        # *** PROBE MANAGEMENT (Parallel) ***
+        if self.is_probe_position and demo_pos != 0:
+            candles_since_entry = self.candle_count - self.probe_entry_candle
+
+            # 1. Confirmation (Scale up)
+            if demo_pnl >= self.probe_confirm_profit:
+                print(f"✅ PROBE CONFIRMED (Parallel)! Scaling up...")
+
+                # Demo scale up
+                base_units = self.demo_bot.calculate_position_size()
+                rem_units = int(base_units * (1 - self.probe_size_pct))
+                direction = "BUY" if demo_pos == 1 else "SELL"
+                self.demo_bot.open_position(direction, rem_units)
+
+                # Live scale up (Live uses its own sizing)
+                live_full = self.live_bot.calculate_position_size(
+                    self.live_bot.get_account_balance()
+                )
+                live_rem = int(live_full * (1 - self.probe_size_pct))
+                self.live_bot.open_position(direction, live_rem)
+
+                self.is_probe_position = False
+                send_notification(
+                    f"✅ USD/JPY Probe confirmed! Scaled both accounts (+${demo_pnl:.2f})"
+                )
+
+            # 2. Timeout (Exit)
+            elif candles_since_entry >= self.probe_max_candles:
+                if demo_pnl < 0:
+                    print(f"⏱️ PROBE TIMEOUT (Parallel)! Closing both...")
+                    self.demo_bot.close_position()
+                    self.live_bot.close_position()
+                    self.is_probe_position = False
+                    send_notification(
+                        f"⏱️ USD/JPY Probe timed out. Closed for ${demo_pnl:+.2f}"
+                    )
+                    return
+                else:
+                    print(f"📊 Probe profitable but not confirmed. Holding...")
+                    self.is_probe_position = False
 
         # Execute on both accounts if signal is actionable
         if signal in ("BUY", "SELL") and confidence >= 50:
             print(f"\n🔀 Executing {signal} on BOTH accounts...")
 
             # Calculate position sizes
-            demo_units = self.demo_bot.calculate_position_size()
             live_balance = self.live_bot.get_account_balance()
-            live_units = self.live_bot.calculate_position_size(live_balance)
 
             # Close existing positions if reversing
             if (signal == "BUY" and demo_pos == -1) or (
@@ -361,6 +412,8 @@ class ParallelTradingBot:
                 print("   Closing live position...")
                 self.live_bot.close_position()
 
+            self.is_probe_position = False
+
             # Open new positions (only if not already in same direction)
             demo_fill = {"success": False}
             live_fill = {"success": False}
@@ -368,17 +421,32 @@ class ParallelTradingBot:
             if (signal == "BUY" and demo_pos != 1) or (
                 signal == "SELL" and demo_pos != -1
             ):
-                success, price = self.demo_bot.open_position(signal, demo_units)
-                demo_fill = {"success": success, "price": price, "units": demo_units}
-                print(f"   ✅ Demo: {signal} {demo_units:,} @ {price:.3f}")
+                # Apply Probe Sizing
+                base_demo_units = self.demo_bot.calculate_position_size()
+                base_live_units = self.live_bot.calculate_position_size(
+                    self.live_bot.get_account_balance()
+                )
 
-            if (signal == "BUY" and live_pos != 1) or (
-                signal == "SELL" and live_pos != -1
-            ):
-                live_fill = self.live_bot.open_position(signal, live_units)
+                if self.use_probe_entry:
+                    units_demo = int(base_demo_units * self.probe_size_pct)
+                    units_live = int(base_live_units * self.probe_size_pct)
+                    print(
+                        f"🔍 PROBE ENTRY: {signal} {units_demo} demo / {units_live} live"
+                    )
+                    self.is_probe_position = True
+                    self.probe_entry_candle = self.candle_count
+                else:
+                    units_demo = base_demo_units
+                    units_live = base_live_units
+
+                success, price = self.demo_bot.open_position(signal, units_demo)
+                demo_fill = {"success": success, "price": price, "units": units_demo}
+                print(f"   ✅ Demo: {signal} {units_demo:,} @ {price:.3f}")
+
+                live_fill = self.live_bot.open_position(signal, units_live)
                 if live_fill["success"]:
                     print(
-                        f"   ✅ Live: {signal} {live_units:,} @ {live_fill['price']:.3f}"
+                        f"   ✅ Live: {signal} {units_live:,} @ {live_fill['price']:.3f}"
                     )
                 else:
                     print(f"   ❌ Live: Failed - {live_fill.get('error', 'Unknown')}")
