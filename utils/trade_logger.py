@@ -406,10 +406,19 @@ class TradeLogger:
         # Read from GCS if enabled
         if self.use_gcs and self.gcs_bucket:
             try:
+                # Try forex_trades.json first (primary file)
+                blob = self.gcs_bucket.blob("trade_logs/forex_trades.json")
+                if blob.exists():
+                    content = blob.download_as_text()
+                    trades = json.loads(content)
+                    if isinstance(trades, list):
+                        all_trades.extend(trades)
+
+                # Also check for any trades_*.json files (legacy)
                 blobs = self.gcs_bucket.list_blobs(prefix="trade_logs/trades_")
-                for blob in blobs:
-                    if blob.name.endswith(".json"):
-                        content = blob.download_as_text()
+                for b in blobs:
+                    if b.name.endswith(".json"):
+                        content = b.download_as_text()
                         trades = json.loads(content)
                         if isinstance(trades, list):
                             all_trades.extend(trades)
