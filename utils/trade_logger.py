@@ -403,8 +403,22 @@ class TradeLogger:
         """
         all_trades = []
 
-        for log_file in sorted(self.log_dir.glob("trades_*.json")):
-            all_trades.extend(self._load_trades(log_file))
+        # Read from GCS if enabled
+        if self.use_gcs and self.gcs_bucket:
+            try:
+                blobs = self.gcs_bucket.list_blobs(prefix="trade_logs/trades_")
+                for blob in blobs:
+                    if blob.name.endswith(".json"):
+                        content = blob.download_as_text()
+                        trades = json.loads(content)
+                        if isinstance(trades, list):
+                            all_trades.extend(trades)
+            except Exception as e:
+                print(f"⚠️ GCS read error in get_all_trades: {e}")
+        else:
+            # Fall back to local files
+            for log_file in sorted(self.log_dir.glob("trades_*.json")):
+                all_trades.extend(self._load_trades(log_file))
 
         if days:
             cutoff = datetime.now() - timedelta(days=days)
