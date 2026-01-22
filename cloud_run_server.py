@@ -507,6 +507,220 @@ def dashboard():
     return html
 
 
+@app.route("/journey")
+def journey():
+    """Public shareable trading journey page"""
+    from oandapyV20 import API
+    from oandapyV20.endpoints.trades import TradesList
+    from datetime import datetime
+
+    # Fetch trade history from OANDA
+    trades = []
+    try:
+        api = API(access_token=os.getenv("OANDA_API_KEY"), environment="practice")
+        r = TradesList(
+            accountID=os.getenv("OANDA_ACCOUNT_ID"),
+            params={"instrument": "USD_JPY", "state": "ALL", "count": 100},
+        )
+        api.request(r)
+        trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
+    except Exception as e:
+        print(f"Journey error: {e}")
+
+    # Calculate stats
+    total_pnl = sum(float(t.get("realizedPL", 0)) for t in trades)
+    winners = [t for t in trades if float(t.get("realizedPL", 0)) > 0]
+    losers = [t for t in trades if float(t.get("realizedPL", 0)) < 0]
+    win_pnl = sum(float(t.get("realizedPL", 0)) for t in winners)
+    loss_pnl = sum(float(t.get("realizedPL", 0)) for t in losers)
+    win_rate = (len(winners) / len(trades) * 100) if trades else 0
+    profit_factor = abs(win_pnl / loss_pnl) if loss_pnl else 0
+    avg_winner = win_pnl / len(winners) if winners else 0
+    avg_loser = loss_pnl / len(losers) if losers else 0
+    best_trade = max((float(t.get("realizedPL", 0)) for t in trades), default=0)
+    worst_trade = min((float(t.get("realizedPL", 0)) for t in trades), default=0)
+    start_balance = 5000
+
+    # Build equity curve data
+    equity = start_balance
+    equity_points = [{"x": 0, "y": equity}]
+    for i, t in enumerate(reversed(trades)):  # oldest first
+        equity += float(t.get("realizedPL", 0))
+        equity_points.append({"x": i + 1, "y": round(equity, 2)})
+
+    # Build trade rows
+    trade_rows = ""
+    for t in trades:
+        open_time = t.get("openTime", "")[:10]
+        units = int(float(t.get("initialUnits", 0)))
+        direction = "LONG" if units > 0 else "SHORT"
+        entry = float(t.get("price", 0))
+        pnl = float(t.get("realizedPL", 0))
+        pnl_class = "positive" if pnl >= 0 else "negative"
+        trade_rows += f'''
+        <tr>
+            <td>{open_time}</td>
+            <td class="{direction.lower()}">{direction}</td>
+            <td>{abs(units):,}</td>
+            <td>{entry:.3f}</td>
+            <td class="{pnl_class}">${pnl:+,.2f}</td>
+        </tr>'''
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>USD/JPY Trading Journey</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <style>
+            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+            body {{ 
+                font-family: 'Inter', -apple-system, sans-serif; 
+                background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 100%);
+                color: #e0e0e0;
+                min-height: 100vh;
+                padding: 20px;
+            }}
+            .container {{ max-width: 1000px; margin: 0 auto; }}
+            h1 {{ text-align: center; font-size: 2rem; margin-bottom: 10px; color: #fff; }}
+            .subtitle {{ text-align: center; color: #888; margin-bottom: 30px; }}
+            
+            .stats-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 15px;
+                margin-bottom: 30px;
+            }}
+            .stat-card {{
+                background: rgba(255,255,255,0.05);
+                border-radius: 10px;
+                padding: 20px;
+                text-align: center;
+                border: 1px solid rgba(255,255,255,0.1);
+            }}
+            .stat-value {{ font-size: 1.8rem; font-weight: 700; color: #4ecdc4; }}
+            .stat-value.positive {{ color: #4caf50; }}
+            .stat-value.negative {{ color: #f44336; }}
+            .stat-label {{ font-size: 0.85rem; color: #888; margin-top: 5px; }}
+            
+            .chart-container {{
+                background: rgba(255,255,255,0.03);
+                border-radius: 12px;
+                padding: 20px;
+                margin-bottom: 30px;
+            }}
+            .chart-title {{ font-size: 1.1rem; margin-bottom: 15px; color: #fff; }}
+            
+            table {{ width: 100%; border-collapse: collapse; }}
+            th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }}
+            th {{ background: rgba(255,255,255,0.05); color: #4ecdc4; }}
+            .positive {{ color: #4caf50; }}
+            .negative {{ color: #f44336; }}
+            .long {{ color: #4caf50; }}
+            .short {{ color: #f44336; }}
+            
+            .footer {{ text-align: center; margin-top: 40px; color: #666; font-size: 0.85rem; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📈 USD/JPY Trading Journey</h1>
+            <p class="subtitle">Mean Reversion Strategy • Demo Account</p>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value {"positive" if total_pnl >= 0 else "negative"}">${total_pnl:+,.2f}</div>
+                    <div class="stat-label">Total P/L</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{len(trades)}</div>
+                    <div class="stat-label">Total Trades</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{win_rate:.1f}%</div>
+                    <div class="stat-label">Win Rate</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{profit_factor:.2f}</div>
+                    <div class="stat-label">Profit Factor</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value positive">${avg_winner:+,.0f}</div>
+                    <div class="stat-label">Avg Winner</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value negative">${avg_loser:+,.0f}</div>
+                    <div class="stat-label">Avg Loser</div>
+                </div>
+            </div>
+            
+            <div class="chart-container">
+                <div class="chart-title">Equity Curve (Starting Balance: $5,000)</div>
+                <canvas id="equityChart"></canvas>
+            </div>
+            
+            <div class="chart-container">
+                <div class="chart-title">Trade History</div>
+                <table>
+                    <thead>
+                        <tr><th>Date</th><th>Direction</th><th>Units</th><th>Entry</th><th>P/L</th></tr>
+                    </thead>
+                    <tbody>
+                        {trade_rows}
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="footer">
+                <p>Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC</p>
+                <p>Strategy: Mean Reversion (Bollinger Bands + RSI) • Timeframe: M15</p>
+            </div>
+        </div>
+        
+        <script>
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            new Chart(ctx, {{
+                type: 'line',
+                data: {{
+                    labels: {[p["x"] for p in equity_points]},
+                    datasets: [{{
+                        label: 'Equity',
+                        data: {[p["y"] for p in equity_points]},
+                        borderColor: '#4ecdc4',
+                        backgroundColor: 'rgba(78, 205, 196, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 2
+                    }}]
+                }},
+                options: {{
+                    responsive: true,
+                    plugins: {{
+                        legend: {{ display: false }}
+                    }},
+                    scales: {{
+                        x: {{ 
+                            display: true,
+                            title: {{ display: true, text: 'Trade #', color: '#888' }},
+                            grid: {{ color: 'rgba(255,255,255,0.05)' }}
+                        }},
+                        y: {{ 
+                            display: true,
+                            title: {{ display: true, text: 'Equity ($)', color: '#888' }},
+                            grid: {{ color: 'rgba(255,255,255,0.05)' }}
+                        }}
+                    }}
+                }}
+            }});
+        </script>
+    </body>
+    </html>
+    """
+
+    return html
+
+
 def run_trading_bot():
     """Run the actual trading bot"""
     from version import __version__, __commit__
