@@ -139,6 +139,10 @@ class USDJPYMeanReversionBot:
         self.position = 0  # -1=short, 0=flat, 1=long
         self.entry_price = 0
 
+        # Trade metadata for logging
+        self.last_signal_data = {}  # RSI, BB position, confidence, reason
+        self.last_market_data = {}  # Current price, ATR, spread
+
         # Performance tracking
         self.trades_today = []  # List of trades for daily summary
         self.start_balance = 0  # Set on startup
@@ -325,6 +329,8 @@ class USDJPYMeanReversionBot:
                     units=units,
                     price=price,
                     account_type=self.mode,
+                    signal_data=self.last_signal_data,
+                    market_data=self.last_market_data,
                 )
             except Exception as log_err:
                 print(f"⚠️ Trade log error: {log_err}")
@@ -387,6 +393,8 @@ class USDJPYMeanReversionBot:
                     units=pos_units,
                     pnl=pnl,
                     account_type=self.mode,
+                    signal_data=self.last_signal_data,
+                    market_data=self.last_market_data,
                 )
             except Exception as log_err:
                 print(f"⚠️ Trade log error: {log_err}")
@@ -417,6 +425,27 @@ class USDJPYMeanReversionBot:
 
         current_price = df.iloc[-1]["Close"]
         timestamp = datetime.now().strftime("%H:%M:%S")
+
+        # Store metadata for trade logging
+        self.last_signal_data = {
+            "rsi": signal_data.get("rsi"),
+            "bb_position": signal_data.get("bb_position"),
+            "confidence": confidence,
+            "reason": reason,
+        }
+
+        # Calculate ATR for market context
+        if len(df) >= 14:
+            high_low = df["High"] - df["Low"]
+            atr = high_low.rolling(window=14).mean().iloc[-1]
+        else:
+            atr = None
+
+        self.last_market_data = {
+            "current_price": current_price,
+            "atr": atr,
+            "spread": None,  # TODO: Get real spread from OANDA pricing endpoint
+        }
 
         print(
             f"[{timestamp}] Price: {current_price:.3f} | Signal: {signal} ({confidence}%) | {reason}"
