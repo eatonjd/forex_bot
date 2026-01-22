@@ -290,17 +290,17 @@ def dashboard():
         all_trades = logger.get_all_trades()
         closed_trades = [t for t in all_trades if t.get("action") == "CLOSE"]
         wins = len([t for t in closed_trades if (t.get("pnl") or 0) > 0])
-        total_pl = sum(float(t.get("pnl", 0)) for t in closed_trades)
         win_rate = (wins / len(closed_trades) * 100) if closed_trades else 0
     except:
         closed_trades = []
         wins = 0
-        total_pl = 0
         win_rate = 0
 
     losses = len(closed_trades) - wins
     start_balance = 5000
-    pct_return = ((demo_data["balance"] - start_balance) / start_balance) * 100
+    # Total P/L from actual balance change (most accurate)
+    total_pl = demo_data["balance"] - start_balance
+    pct_return = (total_pl / start_balance) * 100
 
     # Pre-render demo trades rows
     demo_trades_rows = ""

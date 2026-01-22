@@ -29,7 +29,7 @@ from oandapyV20.endpoints.accounts import AccountSummary
 from oandapyV20.endpoints.instruments import InstrumentsCandles
 from oandapyV20.endpoints.orders import OrderCreate
 from oandapyV20.endpoints.positions import PositionDetails, PositionClose
-from oandapyV20.endpoints.trades import TradesList
+from oandapyV20.endpoints.pricing import PricingInfo
 
 import pandas as pd
 
@@ -268,6 +268,23 @@ class USDJPYMeanReversionBot:
         except:
             return 0, 0, 0, 0
 
+    def get_current_spread(self) -> float:
+        """Get current bid/ask spread in pips for USD_JPY."""
+        try:
+            params = {"instruments": self.instrument}
+            r = PricingInfo(accountID=self.account_id, params=params)
+            self.api.request(r)
+
+            if r.response["prices"]:
+                price_data = r.response["prices"][0]
+                bid = float(price_data["bids"][0]["price"])
+                ask = float(price_data["asks"][0]["price"])
+                spread_pips = (ask - bid) * 100  # USD/JPY: 1 pip = 0.01
+                return round(spread_pips, 2)
+        except Exception as e:
+            print(f"⚠️ Spread fetch error: {e}")
+        return None
+
     def calculate_position_size(self, stop_pips: float = 20) -> int:
         """Calculate position size based on risk."""
         balance = self.get_account_balance()
@@ -444,7 +461,7 @@ class USDJPYMeanReversionBot:
         self.last_market_data = {
             "current_price": current_price,
             "atr": atr,
-            "spread": None,  # TODO: Get real spread from OANDA pricing endpoint
+            "spread": self.get_current_spread(),
         }
 
         print(
