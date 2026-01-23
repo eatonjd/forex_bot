@@ -139,6 +139,12 @@ class USDJPYMeanReversionBot:
         self.position = 0  # -1=short, 0=flat, 1=long
         self.entry_price = 0
 
+        # Regime Detection Settings
+        self.use_regime_filter = True  # Enable trend/range detection
+        self.regime_sma_period = 20  # SMA period for trend detection
+        self.regime_slope_threshold = 0.03  # Min slope per candle to call it trending
+        self.current_regime = "RANGING"  # RANGING, TRENDING_UP, TRENDING_DOWN
+
         # Trade metadata for logging
         self.last_signal_data = {}  # RSI, BB position, confidence, reason
         self.last_market_data = {}  # Current price, ATR, spread
@@ -284,6 +290,29 @@ class USDJPYMeanReversionBot:
         except Exception as e:
             print(f"⚠️ Spread fetch error: {e}")
         return None
+
+    def get_market_regime(self, df) -> str:
+        """
+        Detect market regime: RANGING, TRENDING_UP, or TRENDING_DOWN.
+        Uses SMA slope to determine if market is trending.
+        """
+        if len(df) < self.regime_sma_period + 5:
+            return "RANGING"  # Not enough data, assume ranging
+
+        # Calculate 20-period SMA
+        sma = df["Close"].rolling(window=self.regime_sma_period).mean()
+
+        # Calculate slope over last 5 candles (5 * 15min = 1.25 hours)
+        recent_sma = sma.iloc[-5:].values
+        slope = (recent_sma[-1] - recent_sma[0]) / 5  # Average change per candle
+
+        # Classify regime
+        if slope > self.regime_slope_threshold:
+            return "TRENDING_UP"
+        elif slope < -self.regime_slope_threshold:
+            return "TRENDING_DOWN"
+        else:
+            return "RANGING"
 
     def calculate_position_size(self, stop_pips: float = 20) -> int:
         """Calculate position size based on risk."""
@@ -464,8 +493,20 @@ class USDJPYMeanReversionBot:
             "spread": self.get_current_spread(),
         }
 
+        # Detect market regime (trending or ranging)
+        if self.use_regime_filter:
+            self.current_regime = self.get_market_regime(df)
+            regime_emoji = {
+                "TRENDING_UP": "📈",
+                "TRENDING_DOWN": "📉",
+                "RANGING": "↔️",
+            }.get(self.current_regime, "?")
+        else:
+            self.current_regime = "RANGING"
+            regime_emoji = "↔️"
+
         print(
-            f"[{timestamp}] Price: {current_price:.3f} | Signal: {signal} ({confidence}%) | {reason}"
+            f"[{timestamp}] Price: {current_price:.3f} | {regime_emoji} {self.current_regime} | Signal: {signal} ({confidence}%) | {reason}"
         )
 
         # Show unrealized P/L if in position
@@ -589,6 +630,15 @@ class USDJPYMeanReversionBot:
 
         # Execute trades
         if signal == "BUY" and confidence >= 50:
+            # REGIME FILTER: Skip BUY in downtrend (counter-trend trade)
+            if (
+                self.use_regime_filter
+                and self.current_regime == "TRENDING_DOWN"
+                and pos_dir != 1
+            ):
+                print(f"   ⚠️ REGIME FILTER: Skipping BUY signal (market trending DOWN)")
+                return
+
             if pos_dir == -1:  # Close short first
                 self.close_position()
                 self.scale_in_count = 0  # Reset scale-in count
@@ -632,6 +682,15 @@ class USDJPYMeanReversionBot:
                     )
 
         elif signal == "SELL" and confidence >= 50:
+            # REGIME FILTER: Skip SELL in uptrend (counter-trend trade)
+            if (
+                self.use_regime_filter
+                and self.current_regime == "TRENDING_UP"
+                and pos_dir != -1
+            ):
+                print(f"   ⚠️ REGIME FILTER: Skipping SELL signal (market trending UP)")
+                return
+
             if pos_dir == 1:  # Close long first
                 self.close_position()
                 self.scale_in_count = 0  # Reset scale-in count

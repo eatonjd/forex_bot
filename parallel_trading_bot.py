@@ -120,6 +120,10 @@ class ParallelTradingBot:
         self.is_probe_position = False
         self.candle_count = 0
 
+        # Regime Detection Settings (Synced)
+        self.use_regime_filter = self.demo_bot.use_regime_filter
+        self.current_regime = "RANGING"
+
         print("\n" + "=" * 60)
         print("🔀 PARALLEL TRADING BOT (Demo + Live)")
         print("=" * 60)
@@ -298,8 +302,20 @@ class ParallelTradingBot:
         current_price = df.iloc[-1]["Close"]
         timestamp = datetime.now().strftime("%H:%M:%S")
 
+        # Detect regime
+        if self.use_regime_filter:
+            self.current_regime = self.demo_bot.get_market_regime(df)
+            regime_emoji = {
+                "TRENDING_UP": "📈",
+                "TRENDING_DOWN": "📉",
+                "RANGING": "↔️",
+            }.get(self.current_regime, "?")
+        else:
+            self.current_regime = "RANGING"
+            regime_emoji = "↔️"
+
         print(
-            f"\n[{timestamp}] Price: {current_price:.3f} | Signal: {signal} ({confidence}%) | {reason}"
+            f"\n[{timestamp}] Price: {current_price:.3f} | {regime_emoji} {self.current_regime} | Signal: {signal} ({confidence}%) | {reason}"
         )
 
         # Get current positions
@@ -392,6 +408,27 @@ class ParallelTradingBot:
 
         # Execute on both accounts if signal is actionable
         if signal in ("BUY", "SELL") and confidence >= 50:
+            # REGIME FILTER: Skip counter-trend trades
+            if self.use_regime_filter:
+                if (
+                    signal == "BUY"
+                    and self.current_regime == "TRENDING_DOWN"
+                    and demo_pos != 1
+                ):
+                    print(
+                        f"   ⚠️ REGIME FILTER: Skipping BUY signal (market trending DOWN)"
+                    )
+                    return
+                if (
+                    signal == "SELL"
+                    and self.current_regime == "TRENDING_UP"
+                    and demo_pos != -1
+                ):
+                    print(
+                        f"   ⚠️ REGIME FILTER: Skipping SELL signal (market trending UP)"
+                    )
+                    return
+
             print(f"\n🔀 Executing {signal} on BOTH accounts...")
 
             # Calculate position sizes
