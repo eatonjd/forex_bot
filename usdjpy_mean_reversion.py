@@ -505,6 +505,23 @@ class USDJPYMeanReversionBot:
             self.current_regime = "RANGING"
             regime_emoji = "↔️"
 
+        # In trending markets, use trend-following signals instead of mean reversion
+        if self.current_regime in ("TRENDING_UP", "TRENDING_DOWN"):
+            trend_signal = self.strategy.get_trend_signal(
+                df, len(df) - 1, self.current_regime
+            )
+            if trend_signal["signal"] != "HOLD":
+                signal = trend_signal["signal"]
+                confidence = trend_signal["confidence"]
+                reason = trend_signal.get("reason", "")
+                # Update metadata
+                self.last_signal_data = {
+                    "rsi": trend_signal.get("rsi"),
+                    "bb_position": trend_signal.get("bb_position"),
+                    "confidence": confidence,
+                    "reason": reason,
+                }
+
         print(
             f"[{timestamp}] Price: {current_price:.3f} | {regime_emoji} {self.current_regime} | Signal: {signal} ({confidence}%) | {reason}"
         )

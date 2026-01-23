@@ -115,6 +115,60 @@ class MeanReversionStrategy:
             "bb_position": position_in_band,
         }
 
+    def get_trend_signal(self, df: pd.DataFrame, idx: int, regime: str) -> Dict:
+        """
+        Generate trend-following signal for trending markets.
+
+        In TRENDING_DOWN: Look for pullback bounces to short (RSI > 45)
+        In TRENDING_UP: Look for pullback dips to buy (RSI < 55)
+        """
+        if idx < max(self.bb_period, self.rsi_period) + 1:
+            return {"signal": "HOLD", "confidence": 0, "reason": "Warmup"}
+
+        closes = df["Close"].values[: idx + 1]
+        current_price = closes[-1]
+        rsi = self.calculate_rsi(closes)
+        bb_lower, bb_mid, bb_upper = self.calculate_bollinger(closes)
+
+        band_range = bb_upper - bb_lower
+        position_in_band = (
+            (current_price - bb_lower) / band_range if band_range > 0 else 0.5
+        )
+
+        # Trend-following: Short pullback bounces in downtrend
+        if regime == "TRENDING_DOWN":
+            # RSI bounced from oversold, now showing some strength = opportunity to short
+            if rsi > 45 and rsi < 65:  # Pullback zone
+                confidence = min(100, int(50 + (rsi - 45) * 2))
+                return {
+                    "signal": "SELL",
+                    "confidence": confidence,
+                    "reason": f"Trend SHORT: Pullback (RSI={rsi:.1f})",
+                    "rsi": rsi,
+                    "bb_position": position_in_band,
+                }
+
+        # Trend-following: Buy dips in uptrend
+        elif regime == "TRENDING_UP":
+            # RSI dipped from overbought, now showing some weakness = opportunity to buy
+            if rsi < 55 and rsi > 35:  # Pullback zone
+                confidence = min(100, int(50 + (55 - rsi) * 2))
+                return {
+                    "signal": "BUY",
+                    "confidence": confidence,
+                    "reason": f"Trend LONG: Pullback (RSI={rsi:.1f})",
+                    "rsi": rsi,
+                    "bb_position": position_in_band,
+                }
+
+        return {
+            "signal": "HOLD",
+            "confidence": 0,
+            "reason": "No trend signal",
+            "rsi": rsi,
+            "bb_position": position_in_band,
+        }
+
 
 def backtest_mean_reversion(df: pd.DataFrame, initial_balance: float = 5000) -> Dict:
     """Backtest mean reversion strategy."""
