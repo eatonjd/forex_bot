@@ -1,0 +1,110 @@
+[
+  {
+    "id": "3986",
+    "instrument": "USD_JPY",
+    "price": "153.727",
+    "openTime": "2026-01-28T19:47:15.651439011Z",
+    "initialUnits": "20893",
+    "initialMarginRequired": "1044.6500",
+    "state": "CLOSED",
+    "currentUnits": "0",
+    "realizedPL": "-51.4810",
+    "closingTransactionIDs": [
+      "3988"
+    ],
+    "financing": "0.0000",
+    "dividendAdjustment": "0.0000",
+    "closeTime": "2026-01-28T20:32:19.036622097Z",
+    "averageClosePrice": "153.351"
+  },
+  {
+    "id": "3982",
+    "instrument": "USD_JPY",
+    "price": "153.954",
+    "openTime": "2026-01-28T18:47:07.777397644Z",
+    "initialUnits": "20910",
+    "initialMarginRequired": "1045.5000",
+    "state": "CLOSED",
+    "currentUnits": "0",
+    "realizedPL": "-4.3686",
+    "closingTransactionIDs": [
+      "3984"
+    ],
+    "financing": "0.0000",
+    "dividendAdjustment": "0.0000",
+    "closeTime": "2026-01-28T19:32:12.659881482Z",
+    "averageClosePrice": "153.922"
+  },
+  {
+    "id": "3978",
+    "instrument": "USD_JPY",
+    "price": "153.545",
+    "openTime": "2026-01-28T15:16:52.211125809Z",
+    "initialUnits": "-21136",
+    "initialMarginRequired": "1056.8000",
+    "state": "CLOSED",
+    "currentUnits": "0",
+    "realizedPL": "-56.4347",
+    "closingTransactionIDs": [
+      "3980"
+    ],
+    "financing": "0.0000",
+    "dividendAdjustment": "0.0000",
+    "closeTime": "2026-01-28T18:47:06.344291374Z",
+    "averageClosePrice": "153.954"
+  },
+  {
+    "id": "3974",
+    "instrument": "USD_JPY",
+    "price": "152.916",
+    "openTime": "2026-01-28T01:30:58.962973799Z",
+    "initialUnits": "-21210",
+    "initialMarginRequired": "1060.5000",
+    "state": "CLOSED",
+    "currentUnits": "0",
+    "realizedPL": "-18.3856",
+    "closingTransactionIDs": [
+      "3976"
+    ],
+    "financing": "0.0000",
+    "dividendAdjustment": "0.0000",
+    "closeTime": "2026-01-28T02:16:03.652306924Z",
+    "averageClosePrice": "153.048"
+  },
+  {
+    "id": "3969",
+    "instrument": "USD_JPY",
+    "price": "153.887",
+    "openTime": "2026-01-26T20:12:48.128909962Z",
+    "initialUnits": "-33132",
+    "initialMarginRequired": "1656.6000",
+    "state": "CLOSED",
+    "currentUnits": "0",
+    "realizedPL": "-156.5748",
+    "closingTransactionIDs": [
+      "3972"
+    ],
+    "financing": "-3.7126",
+    "dividendAdjustment": "0.0000",
+    "closeTime": "2026-01-27T04:50:05.566566667Z",
+    "averageClosePrice": "154.614"
+  },
+  {
+    "id": "3967",
+    "instrument": "USD_JPY",
+    "price": "154.219",
+    "openTime": "2026-01-26T19:27:43.844697274Z",
+    "initialUnits": "-22088",
+    "initialMarginRequired": "1104.4000",
+    "state": "CLOSED",
+    "currentUnits": "0",
+    "realizedPL": "-56.7144",
+    "closingTransactionIDs": [
+      "3972"
+    ],
+    "financing": "-2.4751",
+    "dividendAdjustment": "0.0000",
+    "closeTime": "2026-01-27T04:50:05.566566667Z",
+    "averageClosePrice": "154.614"
+  }
+]

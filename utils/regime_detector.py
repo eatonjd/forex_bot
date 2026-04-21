@@ -1,285 +1,320 @@
 #!/usr/bin/env python3
 """
-Market Regime Detection Module.
+Market Regime Detector
 
-Detects whether the market is in a bull, bear, or sideways regime
-using various technical indicators and statistical measures.
+Classifies market conditions into:
+  MEAN_REVERSION  — calm, range-bound (low ADX, low ATR)
+  BREAKOUT        — volatile, trending (high ADX, expanding ATR)
+  TRANSITIONAL    — mixed signals (no new entries, manage existing)
 
-Regimes:
-- BULL: Strong uptrend, buy-and-hold works well
-- BEAR: Downtrend, defensive strategies needed
-- SIDEWAYS: Range-bound, mean reversion strategies
-- VOLATILE: High uncertainty, reduce position sizes
+Uses ATR expansion ratio + ADX trend strength + SMA cross direction.
+
+Author: Trading Bot Team
+Created: 2026-04-19
 """
 
 import numpy as np
 import pandas as pd
-from typing import Tuple, Dict
-from enum import Enum
+from typing import Dict
+from dataclasses import dataclass, field
+from datetime import datetime
 
 
-class MarketRegime(Enum):
-    """Market regime classification."""
-
-    BULL = "bull"
-    BEAR = "bear"
-    SIDEWAYS = "sideways"
-    VOLATILE = "volatile"
+@dataclass
+class RegimeState:
+    """Current market regime classification."""
+    regime: str  # MEAN_REVERSION, BREAKOUT, TRANSITIONAL
+    confidence: int  # 0-100
+    atr_ratio: float  # current ATR vs average (>1.5 = expanding)
+    adx: float  # trend strength (>25 = strong trend)
+    sma_direction: str  # BULLISH, BEARISH, NEUTRAL
+    reason: str  # Human-readable explanation
+    confirmed: bool  # Has regime been stable for confirmation period?
+    candles_in_regime: int  # How many candles current regime has held
 
 
 class RegimeDetector:
     """
-    Detects market regimes using multiple indicators.
+    Detects market regime using ATR + ADX consensus.
 
-    Combines trend analysis, volatility measures, and momentum
-    to classify the current market environment.
+    Regime rules:
+      - ATR ratio < 1.2 AND ADX < 20  → MEAN_REVERSION (calm market)
+      - ATR ratio >= 1.5 AND ADX >= 25 → BREAKOUT (volatile/trending)
+      - Otherwise                      → TRANSITIONAL (mixed signals)
+
+    Confirmation: regime must hold for `confirm_candles` consecutive
+    readings before it's considered stable. This prevents flickering.
     """
+
+    # Thresholds for regime classification
+    ATR_CALM_THRESHOLD = 1.2     # Below this = calm (mean reversion territory)
+    ATR_VOLATILE_THRESHOLD = 1.5  # Above this = volatile (breakout territory)
+    ADX_WEAK_THRESHOLD = 20.0    # Below this = no trend
+    ADX_STRONG_THRESHOLD = 25.0  # Above this = strong trend
 
     def __init__(
         self,
-        sma_short: int = 50,
-        sma_long: int = 200,
-        volatility_window: int = 20,
-        volatility_threshold_high: float = 0.25,
-        volatility_threshold_low: float = 0.12,
-        trend_threshold: float = 0.02,
-        leverage_factor: float = 1.0,  # Set to 3.0 for 3x leveraged ETFs like TQQQ
+        atr_period: int = 14,
+        atr_avg_lookback: int = 50,
+        adx_period: int = 14,
+        sma_fast: int = 20,
+        sma_slow: int = 50,
+        confirm_candles: int = 2,
+        cooldown_candles: int = 2,
     ):
+        self.atr_period = atr_period
+        self.atr_avg_lookback = atr_avg_lookback
+        self.adx_period = adx_period
+        self.sma_fast = sma_fast
+        self.sma_slow = sma_slow
+        self.confirm_candles = confirm_candles
+        self.cooldown_candles = cooldown_candles
+
+        # State tracking
+        self._current_regime = "TRANSITIONAL"
+        self._candles_in_regime = 0
+        self._pending_regime = None
+        self._pending_count = 0
+        self._cooldown_remaining = 0
+        self._last_switch_time = None
+
+    def _calc_atr(self, df: pd.DataFrame, idx: int) -> float:
+        """Calculate ATR at a given index."""
+        if idx < self.atr_period + 1:
+            return 0
+        trs = []
+        for i in range(idx - self.atr_period, idx):
+            h = df["High"].values[i]
+            l = df["Low"].values[i]
+            pc = df["Close"].values[i - 1]
+            trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+        return np.mean(trs)
+
+    def _calc_atr_ratio(self, df: pd.DataFrame, idx: int) -> float:
+        """Calculate current ATR vs longer-term average ATR."""
+        current_atr = self._calc_atr(df, idx)
+        if current_atr == 0:
+            return 1.0
+
+        # Calculate average ATR over lookback period
+        lookback = min(self.atr_avg_lookback, idx - self.atr_period - 1)
+        if lookback < 5:
+            return 1.0
+
+        atr_vals = []
+        for i in range(idx - lookback, idx):
+            v = self._calc_atr(df, i)
+            if v > 0:
+                atr_vals.append(v)
+
+        if not atr_vals:
+            return 1.0
+        return current_atr / np.mean(atr_vals)
+
+    def _calc_adx(self, df: pd.DataFrame, idx: int) -> float:
+        """Calculate ADX at given index."""
+        period = self.adx_period
+        if idx < period * 2 + 1:
+            return 0
+
+        plus_dm_list, minus_dm_list, tr_list = [], [], []
+        for i in range(idx - period * 2, idx):
+            h = df["High"].values[i]
+            l = df["Low"].values[i]
+            ph = df["High"].values[i - 1]
+            pl = df["Low"].values[i - 1]
+            pc = df["Close"].values[i - 1]
+
+            tr_list.append(max(h - l, abs(h - pc), abs(l - pc)))
+            up = h - ph
+            dn = pl - l
+            plus_dm_list.append(up if up > dn and up > 0 else 0)
+            minus_dm_list.append(dn if dn > up and dn > 0 else 0)
+
+        def wilders(vals, p):
+            s = [np.mean(vals[:p])]
+            for v in vals[p:]:
+                s.append(s[-1] - s[-1] / p + v)
+            return s
+
+        sm_tr = wilders(tr_list, period)
+        sm_pdm = wilders(plus_dm_list, period)
+        sm_mdm = wilders(minus_dm_list, period)
+
+        dx_list = []
+        for i in range(len(sm_tr)):
+            if sm_tr[i] == 0:
+                continue
+            pdi = 100 * sm_pdm[i] / sm_tr[i]
+            mdi = 100 * sm_mdm[i] / sm_tr[i]
+            s = pdi + mdi
+            if s > 0:
+                dx_list.append(100 * abs(pdi - mdi) / s)
+
+        if not dx_list:
+            return 0
+        return np.mean(dx_list[-period:]) if len(dx_list) >= period else np.mean(dx_list)
+
+    def _calc_sma_direction(self, df: pd.DataFrame, idx: int) -> str:
+        """Determine SMA cross direction (BULLISH / BEARISH / NEUTRAL)."""
+        if idx < self.sma_slow + 1:
+            return "NEUTRAL"
+
+        sma_fast = df["Close"].values[idx - self.sma_fast : idx].mean()
+        sma_slow = df["Close"].values[idx - self.sma_slow : idx].mean()
+
+        diff_pct = (sma_fast - sma_slow) / sma_slow * 100
+        if diff_pct > 0.05:
+            return "BULLISH"
+        elif diff_pct < -0.05:
+            return "BEARISH"
+        return "NEUTRAL"
+
+    def _classify_raw(self, atr_ratio: float, adx: float) -> str:
+        """Raw regime classification from indicators (no confirmation)."""
+        calm_atr = atr_ratio < self.ATR_CALM_THRESHOLD
+        volatile_atr = atr_ratio >= self.ATR_VOLATILE_THRESHOLD
+        weak_trend = adx < self.ADX_WEAK_THRESHOLD
+        strong_trend = adx >= self.ADX_STRONG_THRESHOLD
+
+        # Both indicators agree on calm
+        if calm_atr and weak_trend:
+            return "MEAN_REVERSION"
+
+        # Both indicators agree on volatile/trending
+        if volatile_atr and strong_trend:
+            return "BREAKOUT"
+
+        # Strong consensus on one side
+        if calm_atr and not strong_trend:
+            return "MEAN_REVERSION"
+        if volatile_atr and not weak_trend:
+            return "BREAKOUT"
+
+        # Mixed signals
+        return "TRANSITIONAL"
+
+    def detect(self, df: pd.DataFrame, idx: int = None) -> RegimeState:
         """
-        Initialize the regime detector.
+        Detect current market regime.
 
-        Args:
-            sma_short: Short-term moving average period
-            sma_long: Long-term moving average period
-            volatility_window: Window for volatility calculation
-            volatility_threshold_high: Annualized vol above this = volatile
-            volatility_threshold_low: Annualized vol below this = calm
-            trend_threshold: Minimum trend strength to call bull/bear
-            leverage_factor: Multiplier for leveraged ETFs (e.g., 3.0 for TQQQ)
+        Returns RegimeState with classification, confidence, and metadata.
         """
-        self.sma_short = sma_short
-        self.sma_long = sma_long
-        self.volatility_window = volatility_window
-        # Scale volatility thresholds for leveraged products
-        self.volatility_threshold_high = volatility_threshold_high * leverage_factor
-        self.volatility_threshold_low = volatility_threshold_low * leverage_factor
-        self.trend_threshold = trend_threshold
-        self.leverage_factor = leverage_factor
+        if idx is None:
+            idx = len(df) - 1
 
-    def calculate_trend_strength(self, prices: pd.Series) -> float:
-        """
-        Calculate trend strength using moving average crossover.
+        warmup = max(self.atr_period * 2 + 1, self.adx_period * 2 + 1, self.sma_slow + 1)
+        if idx < warmup:
+            return RegimeState(
+                regime="TRANSITIONAL",
+                confidence=0,
+                atr_ratio=1.0,
+                adx=0,
+                sma_direction="NEUTRAL",
+                reason="Warmup period",
+                confirmed=False,
+                candles_in_regime=0,
+            )
 
-        Returns:
-            Trend strength: positive = bullish, negative = bearish
-        """
-        if len(prices) < self.sma_long:
-            return 0.0
-
-        sma_short = prices.rolling(self.sma_short).mean()
-        sma_long = prices.rolling(self.sma_long).mean()
-
-        # Trend strength as percentage difference between SMAs
-        current_short = sma_short.iloc[-1]
-        current_long = sma_long.iloc[-1]
-
-        if current_long == 0:
-            return 0.0
-
-        trend_strength = (current_short - current_long) / current_long
-        return trend_strength
-
-    def calculate_volatility(self, prices: pd.Series) -> float:
-        """
-        Calculate annualized volatility.
-
-        Returns:
-            Annualized volatility as a decimal (e.g., 0.20 = 20%)
-        """
-        if len(prices) < self.volatility_window + 1:
-            return 0.15  # Default moderate volatility
-
-        returns = prices.pct_change().dropna()
-        recent_returns = returns.tail(self.volatility_window)
-
-        daily_vol = recent_returns.std()
-        annualized_vol = daily_vol * np.sqrt(252)
-
-        return annualized_vol
-
-    def calculate_momentum(self, prices: pd.Series, window: int = 20) -> float:
-        """
-        Calculate price momentum.
-
-        Returns:
-            Momentum as percentage change over window
-        """
-        if len(prices) < window:
-            return 0.0
-
-        current = prices.iloc[-1]
-        past = prices.iloc[-window]
-
-        if past == 0:
-            return 0.0
-
-        return (current - past) / past
-
-    def calculate_rsi(self, prices: pd.Series, period: int = 14) -> float:
-        """Calculate RSI indicator."""
-        if len(prices) < period + 1:
-            return 50.0
-
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-
-        rs = gain.iloc[-1] / (loss.iloc[-1] + 1e-10)
-        rsi = 100 - (100 / (1 + rs))
-
-        return rsi
-
-    def detect_regime(self, prices: pd.Series) -> Tuple[MarketRegime, Dict]:
-        """
-        Detect the current market regime.
-
-        Args:
-            prices: Series of closing prices
-
-        Returns:
-            Tuple of (regime, details_dict)
-        """
         # Calculate indicators
-        trend = self.calculate_trend_strength(prices)
-        volatility = self.calculate_volatility(prices)
-        momentum = self.calculate_momentum(prices)
-        rsi = self.calculate_rsi(prices)
+        atr_ratio = round(self._calc_atr_ratio(df, idx), 2)
+        adx = round(self._calc_adx(df, idx), 1)
+        sma_dir = self._calc_sma_direction(df, idx)
 
-        details = {
-            "trend_strength": trend,
-            "volatility": volatility,
-            "momentum": momentum,
-            "rsi": rsi,
-        }
+        # Raw classification
+        raw_regime = self._classify_raw(atr_ratio, adx)
 
-        # High volatility overrides other signals
-        if volatility > self.volatility_threshold_high:
-            return MarketRegime.VOLATILE, details
-
-        # Determine regime based on trend
-        if trend > self.trend_threshold:
-            # Bullish: price above long-term average with positive momentum
-            if momentum > 0 and rsi < 75:
-                return MarketRegime.BULL, details
-            elif rsi >= 75:
-                # Overbought in uptrend - might be topping
-                return MarketRegime.VOLATILE, details
-            else:
-                return MarketRegime.SIDEWAYS, details
-
-        elif trend < -self.trend_threshold:
-            # Bearish: price below long-term average
-            if momentum < 0 and rsi > 25:
-                return MarketRegime.BEAR, details
-            elif rsi <= 25:
-                # Oversold in downtrend - might be bottoming
-                return MarketRegime.VOLATILE, details
-            else:
-                return MarketRegime.SIDEWAYS, details
-
+        # --- Confirmation logic ---
+        # If raw matches current, strengthen conviction
+        if raw_regime == self._current_regime:
+            self._candles_in_regime += 1
+            self._pending_regime = None
+            self._pending_count = 0
+        # If raw differs, start counting toward switch
+        elif raw_regime == self._pending_regime:
+            self._pending_count += 1
         else:
-            # No clear trend
-            if volatility < self.volatility_threshold_low:
-                return MarketRegime.SIDEWAYS, details
-            else:
-                return MarketRegime.SIDEWAYS, details
+            self._pending_regime = raw_regime
+            self._pending_count = 1
 
-    def get_regime_adjustments(self, regime: MarketRegime) -> Dict:
-        """
-        Get trading parameter adjustments for the current regime.
+        # Switch regime if pending has confirmed
+        confirmed = True
+        if self._pending_regime and self._pending_count >= self.confirm_candles:
+            old_regime = self._current_regime
+            self._current_regime = self._pending_regime
+            self._candles_in_regime = self._pending_count
+            self._pending_regime = None
+            self._pending_count = 0
+            self._cooldown_remaining = self.cooldown_candles
+            self._last_switch_time = datetime.now()
+            print(
+                f"🔄 REGIME SWITCH: {old_regime} → {self._current_regime} "
+                f"(ATR×={atr_ratio}, ADX={adx})"
+            )
 
-        Returns:
-            Dictionary of suggested parameter adjustments
-        """
-        adjustments = {
-            MarketRegime.BULL: {
-                "position_size_multiplier": 1.2,  # Slightly larger positions
-                "stop_loss_pct": 0.08,  # Wider stops
-                "take_profit_pct": 0.15,  # Let winners run
-                "trade_frequency": "normal",
-                "bias": "long",
-                "description": "Uptrend - favor buying dips, wider stops",
-            },
-            MarketRegime.BEAR: {
-                "position_size_multiplier": 0.5,  # Smaller positions
-                "stop_loss_pct": 0.05,  # Tighter stops
-                "take_profit_pct": 0.08,  # Take profits quickly
-                "trade_frequency": "reduced",
-                "bias": "short_or_cash",
-                "description": "Downtrend - defensive, quick exits",
-            },
-            MarketRegime.SIDEWAYS: {
-                "position_size_multiplier": 0.8,  # Moderate positions
-                "stop_loss_pct": 0.06,  # Standard stops
-                "take_profit_pct": 0.10,  # Mean reversion targets
-                "trade_frequency": "normal",
-                "bias": "neutral",
-                "description": "Range-bound - mean reversion strategies",
-            },
-            MarketRegime.VOLATILE: {
-                "position_size_multiplier": 0.3,  # Small positions
-                "stop_loss_pct": 0.10,  # Wide stops for volatility
-                "take_profit_pct": 0.12,  # Capture big moves
-                "trade_frequency": "reduced",
-                "bias": "cautious",
-                "description": "High volatility - reduce size, be patient",
-            },
+        # Cooldown after switch
+        if self._cooldown_remaining > 0:
+            self._cooldown_remaining -= 1
+            confirmed = False
+
+        # Confidence scoring
+        confidence = 50
+        if self._current_regime == "MEAN_REVERSION":
+            if atr_ratio < 1.0:
+                confidence += 25
+            if adx < 15:
+                confidence += 25
+            elif adx < 20:
+                confidence += 10
+        elif self._current_regime == "BREAKOUT":
+            if atr_ratio > 2.0:
+                confidence += 25
+            if adx > 35:
+                confidence += 25
+            elif adx > 25:
+                confidence += 10
+        else:  # TRANSITIONAL
+            confidence = 30
+
+        confidence = min(100, max(0, confidence))
+
+        # Build reason string
+        parts = []
+        parts.append(f"ATR×={atr_ratio}")
+        parts.append(f"ADX={adx}")
+        parts.append(f"SMA={sma_dir}")
+        if self._cooldown_remaining > 0:
+            parts.append(f"cooldown={self._cooldown_remaining}")
+        reason = " | ".join(parts)
+
+        return RegimeState(
+            regime=self._current_regime,
+            confidence=confidence,
+            atr_ratio=atr_ratio,
+            adx=adx,
+            sma_direction=sma_dir,
+            reason=reason,
+            confirmed=confirmed,
+            candles_in_regime=self._candles_in_regime,
+        )
+
+    def get_state_dict(self) -> dict:
+        """Return serializable state for persistence."""
+        return {
+            "current_regime": self._current_regime,
+            "candles_in_regime": self._candles_in_regime,
+            "pending_regime": self._pending_regime,
+            "pending_count": self._pending_count,
+            "cooldown_remaining": self._cooldown_remaining,
+            "last_switch_time": self._last_switch_time.isoformat() if self._last_switch_time else None,
         }
 
-        return adjustments.get(regime, adjustments[MarketRegime.SIDEWAYS])
-
-
-def detect_regime_from_df(
-    df: pd.DataFrame, price_col: str = "Close"
-) -> Tuple[MarketRegime, Dict]:
-    """
-    Convenience function to detect regime from a DataFrame.
-
-    Args:
-        df: DataFrame with price data
-        price_col: Name of the price column
-
-    Returns:
-        Tuple of (regime, details)
-    """
-    detector = RegimeDetector()
-    prices = df[price_col]
-    return detector.detect_regime(prices)
-
-
-if __name__ == "__main__":
-    # Example usage
-    import yfinance as yf
-
-    print("📊 Market Regime Detection Demo\n")
-
-    symbols = ["QQQ", "SPY", "AAPL"]
-    detector = RegimeDetector()
-
-    for symbol in symbols:
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(period="2y")
-
-        regime, details = detector.detect_regime(df["Close"])
-        adjustments = detector.get_regime_adjustments(regime)
-
-        print(f"{'=' * 50}")
-        print(f"📈 {symbol}")
-        print(f"{'=' * 50}")
-        print(f"   Regime: {regime.value.upper()}")
-        print(f"   Trend Strength: {details['trend_strength']:.2%}")
-        print(f"   Volatility: {details['volatility']:.1%}")
-        print(f"   RSI: {details['rsi']:.1f}")
-        print(f"   Recommendation: {adjustments['description']}")
-        print(f"   Position Size: {adjustments['position_size_multiplier']:.1f}x")
-        print()
+    def load_state_dict(self, state: dict):
+        """Restore state from dict."""
+        self._current_regime = state.get("current_regime", "TRANSITIONAL")
+        self._candles_in_regime = state.get("candles_in_regime", 0)
+        self._pending_regime = state.get("pending_regime")
+        self._pending_count = state.get("pending_count", 0)
+        self._cooldown_remaining = state.get("cooldown_remaining", 0)
+        ts = state.get("last_switch_time")
+        self._last_switch_time = datetime.fromisoformat(ts) if ts else None

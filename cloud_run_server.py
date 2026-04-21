@@ -36,13 +36,14 @@ bot_status = {
 @app.route("/")
 def health():
     """Health check endpoint"""
-    return jsonify(
-        {
-            "status": "healthy",
-            "bot_running": bot_status["running"],
-            "uptime": time.time() - bot_status["last_check"],
-        }
-    )
+    resp = {
+        "status": "healthy",
+        "bot_running": bot_status["running"],
+        "uptime": time.time() - bot_status["last_check"],
+    }
+    if "bot_data" in bot_status:
+        resp["bot_data"] = bot_status["bot_data"]
+    return jsonify(resp)
 
 
 @app.route("/health")
@@ -105,6 +106,9 @@ def health_check():
             "trading_loop_started": init["trading_loop_started"],
         },
     }
+
+    if "bot_data" in bot_status:
+        response["bot_data"] = bot_status["bot_data"]
 
     if init["error"]:
         response["error"] = str(init["error"])
@@ -230,6 +234,14 @@ def _generate_live_trades_html(live_trades):
 
 @app.route("/dashboard")
 def dashboard():
+    """Redirect to journey page (now the combined dashboard)"""
+    from flask import redirect
+
+    return redirect("/journey")
+
+
+@app.route("/dashboard_old")
+def dashboard_old():
     """Public trading dashboard - shareable web page"""
     from oandapyV20 import API
     from oandapyV20.endpoints.accounts import AccountSummary
@@ -253,7 +265,7 @@ def dashboard():
         # Demo trades
         trades_r = TradesList(
             accountID=os.getenv("OANDA_ACCOUNT_ID"),
-            params={"instrument": "USD_JPY", "state": "ALL", "count": 100},
+            params={"instrument": "USD_JPY", "state": "ALL", "count": 500},
         )
         demo_api.request(trades_r)
         demo_data["trades"] = trades_r.response.get("trades", [])
@@ -301,6 +313,31 @@ def dashboard():
     # Total P/L from actual balance change (most accurate)
     total_pl = demo_data["balance"] - start_balance
     pct_return = (total_pl / start_balance) * 100
+
+    # Phase 4 Metrics (The 'Reset' clock)
+    phase4_start = "2026-01-24"  # Date of Regime Filter deployment
+    p4_trades = [
+        t
+        for t in demo_data.get("trades", [])
+        if t.get("state") == "CLOSED" and t.get("openTime", "")[:10] >= phase4_start
+    ]
+    p4_count = len(p4_trades)
+    p4_wins = len([t for t in p4_trades if float(t.get("realizedPL", 0)) > 0])
+    p4_wr = (p4_wins / p4_count * 100) if p4_count else 0
+    # Calculate Phase 4 drawdown
+    p4_peak = demo_data["balance"] - sum(
+        float(t.get("realizedPL", 0)) for t in p4_trades
+    )  # Start of phase 4 balance
+    p4_bal = p4_peak
+    p4_max_dd = 0
+    p4_peak_running = p4_bal
+    for t in sorted(p4_trades, key=lambda x: x.get("closeTime", "")):
+        p4_bal += float(t.get("realizedPL", 0))
+        if p4_bal > p4_peak_running:
+            p4_peak_running = p4_bal
+        dd = (p4_peak_running - p4_bal) / p4_peak_running * 100
+        if dd > p4_max_dd:
+            p4_max_dd = dd
 
     # Pre-render demo trades rows
     demo_trades_rows = ""
@@ -465,13 +502,17 @@ def dashboard():
             {live_trades_html}
 
             <div class="section">
-                <div class="section-title">🎯 Go-Live Criteria</div>
+                <div class="section-title">🎯 Go-Live Criteria (Phase 4 Reset)</div>
+                <div style="font-size:0.8rem;color:#888;margin-bottom:10px;">Tracking starts from Jan 24 (Regime Filter deployment)</div>
                 <table>
-                    <tr><td>Total Trades</td><td>{len(closed_trades)}/30</td><td>{"✅" if len(closed_trades) >= 30 else "🟡"}</td></tr>
-                    <tr><td>Win Rate</td><td>{win_rate:.1f}%</td><td>{"✅" if win_rate >= 55 else "❌"}</td></tr>
-                    <tr><td>Profitable Weeks</td><td>3/3</td><td>✅</td></tr>
-                    <tr><td>NFP Survived</td><td>Jan 9</td><td>✅</td></tr>
-                    <tr><td>Max Drawdown</td><td>&lt;10%</td><td>✅</td></tr>
+                    <thead>
+                        <tr><th>Metric</th><th>Progress</th><th>Goal</th><th>Status</th></tr>
+                    </thead>
+                    <tr><td>Total Trades</td><td>{p4_count}/30</td><td>30</td><td>{"✅" if p4_count >= 30 else "🟡"}</td></tr>
+                    <tr><td>Win Rate</td><td>{p4_wr:.1f}%</td><td>>55%</td><td>{"✅" if p4_wr >= 55 else "🟡" if p4_wr >= 45 else "❌"}</td></tr>
+                    <tr><td>Max Drawdown</td><td>{p4_max_dd:.1f}%</td><td><10%</td><td>{"✅" if p4_max_dd < 10 else "❌"}</td></tr>
+                    <tr><td>Profitable Weeks</td><td>1/3</td><td>3</td><td>🟡</td></tr>
+                    <tr><td>NFP Survived</td><td>Jan 9</td><td>-</td><td>✅</td></tr>
                 </table>
             </div>
 
@@ -509,10 +550,10 @@ def dashboard():
 
 @app.route("/journey")
 def journey():
-    """Public shareable trading journey page"""
+    """Enhanced public trading journey page with phase tracking and trade details"""
     from oandapyV20 import API
     from oandapyV20.endpoints.trades import TradesList
-    from datetime import datetime
+    from journey_page import generate_journey_html
 
     # Fetch trade history from OANDA
     trades = []
@@ -520,205 +561,31 @@ def journey():
         api = API(access_token=os.getenv("OANDA_API_KEY"), environment="practice")
         r = TradesList(
             accountID=os.getenv("OANDA_ACCOUNT_ID"),
-            params={"instrument": "USD_JPY", "state": "ALL", "count": 100},
+            params={"instrument": "USD_JPY", "state": "ALL", "count": 500},
         )
         api.request(r)
         trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
     except Exception as e:
         print(f"Journey error: {e}")
 
-    # Calculate stats
-    total_pnl = sum(float(t.get("realizedPL", 0)) for t in trades)
-    winners = [t for t in trades if float(t.get("realizedPL", 0)) > 0]
-    losers = [t for t in trades if float(t.get("realizedPL", 0)) < 0]
-    win_pnl = sum(float(t.get("realizedPL", 0)) for t in winners)
-    loss_pnl = sum(float(t.get("realizedPL", 0)) for t in losers)
-    win_rate = (len(winners) / len(trades) * 100) if trades else 0
-    profit_factor = abs(win_pnl / loss_pnl) if loss_pnl else 0
-    avg_winner = win_pnl / len(winners) if winners else 0
-    avg_loser = loss_pnl / len(losers) if losers else 0
-    best_trade = max((float(t.get("realizedPL", 0)) for t in trades), default=0)
-    worst_trade = min((float(t.get("realizedPL", 0)) for t in trades), default=0)
-    start_balance = 5000
-
-    # Build equity curve data
-    equity = start_balance
-    equity_points = [{"x": 0, "y": equity}]
-    for i, t in enumerate(reversed(trades)):  # oldest first
-        equity += float(t.get("realizedPL", 0))
-        equity_points.append({"x": i + 1, "y": round(equity, 2)})
-
-    # Build trade rows
-    trade_rows = ""
-    for t in trades:
-        open_time = t.get("openTime", "")[:10]
-        units = int(float(t.get("initialUnits", 0)))
-        direction = "LONG" if units > 0 else "SHORT"
-        entry = float(t.get("price", 0))
-        pnl = float(t.get("realizedPL", 0))
-        pnl_class = "positive" if pnl >= 0 else "negative"
-        trade_rows += f'''
-        <tr>
-            <td>{open_time}</td>
-            <td class="{direction.lower()}">{direction}</td>
-            <td>{abs(units):,}</td>
-            <td>{entry:.3f}</td>
-            <td class="{pnl_class}">${pnl:+,.2f}</td>
-        </tr>'''
-
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>USD/JPY Trading Journey</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <style>
-            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-            body {{ 
-                font-family: 'Inter', -apple-system, sans-serif; 
-                background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 100%);
-                color: #e0e0e0;
-                min-height: 100vh;
-                padding: 20px;
-            }}
-            .container {{ max-width: 1000px; margin: 0 auto; }}
-            h1 {{ text-align: center; font-size: 2rem; margin-bottom: 10px; color: #fff; }}
-            .subtitle {{ text-align: center; color: #888; margin-bottom: 30px; }}
-            
-            .stats-grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-                gap: 15px;
-                margin-bottom: 30px;
-            }}
-            .stat-card {{
-                background: rgba(255,255,255,0.05);
-                border-radius: 10px;
-                padding: 20px;
-                text-align: center;
-                border: 1px solid rgba(255,255,255,0.1);
-            }}
-            .stat-value {{ font-size: 1.8rem; font-weight: 700; color: #4ecdc4; }}
-            .stat-value.positive {{ color: #4caf50; }}
-            .stat-value.negative {{ color: #f44336; }}
-            .stat-label {{ font-size: 0.85rem; color: #888; margin-top: 5px; }}
-            
-            .chart-container {{
-                background: rgba(255,255,255,0.03);
-                border-radius: 12px;
-                padding: 20px;
-                margin-bottom: 30px;
-            }}
-            .chart-title {{ font-size: 1.1rem; margin-bottom: 15px; color: #fff; }}
-            
-            table {{ width: 100%; border-collapse: collapse; }}
-            th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }}
-            th {{ background: rgba(255,255,255,0.05); color: #4ecdc4; }}
-            .positive {{ color: #4caf50; }}
-            .negative {{ color: #f44336; }}
-            .long {{ color: #4caf50; }}
-            .short {{ color: #f44336; }}
-            
-            .footer {{ text-align: center; margin-top: 40px; color: #666; font-size: 0.85rem; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>📈 USD/JPY Trading Journey</h1>
-            <p class="subtitle">Mean Reversion Strategy • Demo Account</p>
-            
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-value {"positive" if total_pnl >= 0 else "negative"}">${total_pnl:+,.2f}</div>
-                    <div class="stat-label">Total P/L</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">{len(trades)}</div>
-                    <div class="stat-label">Total Trades</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">{win_rate:.1f}%</div>
-                    <div class="stat-label">Win Rate</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">{profit_factor:.2f}</div>
-                    <div class="stat-label">Profit Factor</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value positive">${avg_winner:+,.0f}</div>
-                    <div class="stat-label">Avg Winner</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value negative">${avg_loser:+,.0f}</div>
-                    <div class="stat-label">Avg Loser</div>
-                </div>
-            </div>
-            
-            <div class="chart-container">
-                <div class="chart-title">Equity Curve (Starting Balance: $5,000)</div>
-                <canvas id="equityChart"></canvas>
-            </div>
-            
-            <div class="chart-container">
-                <div class="chart-title">Trade History</div>
-                <table>
-                    <thead>
-                        <tr><th>Date</th><th>Direction</th><th>Units</th><th>Entry</th><th>P/L</th></tr>
-                    </thead>
-                    <tbody>
-                        {trade_rows}
-                    </tbody>
-                </table>
-            </div>
-            
-            <div class="footer">
-                <p>Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC</p>
-                <p>Strategy: Mean Reversion (Bollinger Bands + RSI) • Timeframe: M15</p>
-            </div>
-        </div>
-        
-        <script>
-            const ctx = document.getElementById('equityChart').getContext('2d');
-            new Chart(ctx, {{
-                type: 'line',
-                data: {{
-                    labels: {[p["x"] for p in equity_points]},
-                    datasets: [{{
-                        label: 'Equity',
-                        data: {[p["y"] for p in equity_points]},
-                        borderColor: '#4ecdc4',
-                        backgroundColor: 'rgba(78, 205, 196, 0.1)',
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: 2
-                    }}]
-                }},
-                options: {{
-                    responsive: true,
-                    plugins: {{
-                        legend: {{ display: false }}
-                    }},
-                    scales: {{
-                        x: {{ 
-                            display: true,
-                            title: {{ display: true, text: 'Trade #', color: '#888' }},
-                            grid: {{ color: 'rgba(255,255,255,0.05)' }}
-                        }},
-                        y: {{ 
-                            display: true,
-                            title: {{ display: true, text: 'Equity ($)', color: '#888' }},
-                            grid: {{ color: 'rgba(255,255,255,0.05)' }}
-                        }}
-                    }}
-                }}
-            }});
-        </script>
-    </body>
-    </html>
-    """
-
+    # Generate enhanced HTML from journey_page module
+    html = generate_journey_html(trades, start_balance=5000)
     return html
+
+
+@app.route("/command-center")
+def command_center():
+    """Combined dashboard showing all three bot accounts"""
+    from command_center import generate_command_center_html
+
+    try:
+        html = generate_command_center_html()
+        return html
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"<h1>Command Center Error</h1><pre>{e}</pre>", 500
+
 
 
 def run_trading_bot():
@@ -758,11 +625,41 @@ def run_trading_bot():
     print("=" * 60, flush=True)
 
     try:
-        # Check if parallel mode is enabled (live credentials present)
+        bot_type = os.getenv("BOT_TYPE", "mean_reversion").lower()
         live_key = os.getenv("OANDA_API_KEY_LIVE")
         live_account = os.getenv("OANDA_ACCOUNT_ID_LIVE")
 
-        if live_key and live_account:
+        if bot_type == "regime":
+            print("📦 Importing USD/JPY Regime Bot...", flush=True)
+            from usdjpy_regime_bot import USDJPYRegimeBot
+
+            print("🏗️  Instantiating USD/JPY Regime Bot...", flush=True)
+            bot = USDJPYRegimeBot(mode=os.getenv("BOT_MODE", "paper"))
+
+            bot_status["initialization"]["oanda_connected"] = True
+            bot_status["initialization"]["model_loaded"] = True
+            bot_status["initialization"]["position_manager_ready"] = True
+            bot_status["initialization"]["decision_reasoning_ready"] = True
+            bot_status["initialization"]["trading_loop_started"] = True
+            bot_status["initialization"]["completed"] = True
+
+            print("✅ Regime bot initialized, starting trading loop...", flush=True)
+
+            try:
+                while True:
+                    # Let the bot itself handle market open/close checks to keep logic unified
+                    bot.run_once()
+                    bot_status["iteration"] += 1
+                    bot_status["last_heartbeat"] = time.time()
+                    if hasattr(bot, 'get_health_data'):
+                        bot_status["bot_data"] = bot.get_health_data()
+                    time.sleep(15 * 60)  # 15 minutes
+            except KeyboardInterrupt:
+                print("\n\n🛑 Stopping Regime Bot...", flush=True)
+            finally:
+                bot_status["running"] = False
+
+        elif live_key and live_account and bot_type == "parallel":
             # Use Parallel Trading Bot for slippage testing
             print("📦 Importing Parallel Trading Bot (Demo + Live)...", flush=True)
             from parallel_trading_bot import ParallelTradingBot
@@ -797,8 +694,14 @@ def run_trading_bot():
             print("📦 Importing USD/JPY Mean Reversion Bot (Demo only)...", flush=True)
             from usdjpy_mean_reversion import USDJPYMeanReversionBot
 
+            # If live credentials exist but parallel not explicitly set, run live if mode demands,
+            # otherwise just run whatever BOT_MODE specifies (usually paper by default).
+            if live_key and live_account and os.getenv("BOT_MODE", "paper") != "paper":
+                 # Fallback code path to avoid crashing
+                 pass
+
             print("🏗️  Instantiating USD/JPY Mean Reversion Bot...", flush=True)
-            bot = USDJPYMeanReversionBot(mode="paper")
+            bot = USDJPYMeanReversionBot(mode=os.getenv("BOT_MODE", "paper"))
 
             # Mark initialization stages
             bot_status["initialization"]["oanda_connected"] = True
@@ -811,8 +714,18 @@ def run_trading_bot():
             print("✅ Bot initialized, starting trading loop...", flush=True)
 
             try:
+                # Import market hours check
+                from usdjpy_mean_reversion import is_forex_market_open
+
                 # Run with 15 minute intervals
                 while True:
+                    # Check if forex market is open
+                    market_open, reason = is_forex_market_open()
+                    if not market_open:
+                        print(f"🌙 {reason} - sleeping 30 min", flush=True)
+                        time.sleep(30 * 60)  # Sleep 30 min when market closed
+                        continue
+
                     bot.run_once()
                     bot_status["iteration"] += 1
                     bot_status["last_heartbeat"] = time.time()

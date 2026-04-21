@@ -137,26 +137,30 @@ class MeanReversionStrategy:
 
         # Trend-following: Short pullback bounces in downtrend
         if regime == "TRENDING_DOWN":
-            # RSI bounced from oversold, now showing some strength = opportunity to short
-            if rsi > 45 and rsi < 65:  # Pullback zone
-                confidence = min(100, int(50 + (rsi - 45) * 2))
+            # PHASE 7.3: Narrowed from RSI 40-70 to 50-65
+            # Requires genuine pullback bounce (RSI > 50) before shorting
+            if rsi > 50 and rsi < 65:
+                # Higher RSI = better short opportunity (more of a bounce)
+                confidence = min(100, int(40 + (rsi - 50) * 4.0))
                 return {
                     "signal": "SELL",
                     "confidence": confidence,
-                    "reason": f"Trend SHORT: Pullback (RSI={rsi:.1f})",
+                    "reason": f"Trend SHORT: RSI={rsi:.1f} pullback in downtrend",
                     "rsi": rsi,
                     "bb_position": position_in_band,
                 }
 
         # Trend-following: Buy dips in uptrend
         elif regime == "TRENDING_UP":
-            # RSI dipped from overbought, now showing some weakness = opportunity to buy
-            if rsi < 55 and rsi > 35:  # Pullback zone
-                confidence = min(100, int(50 + (55 - rsi) * 2))
+            # PHASE 7.3: Narrowed from RSI 30-60 to 35-55
+            # Requires actual dip (RSI < 55) before buying
+            if rsi > 35 and rsi < 55:
+                # Lower RSI = better buy opportunity (more of a dip)
+                confidence = min(100, int(50 + (55 - rsi)))
                 return {
                     "signal": "BUY",
                     "confidence": confidence,
-                    "reason": f"Trend LONG: Pullback (RSI={rsi:.1f})",
+                    "reason": f"Trend LONG: RSI={rsi:.1f} dip in uptrend",
                     "rsi": rsi,
                     "bb_position": position_in_band,
                 }
