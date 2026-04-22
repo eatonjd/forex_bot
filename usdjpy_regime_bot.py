@@ -335,8 +335,9 @@ class USDJPYRegimeBot:
                 return -1, abs(short_u), float(pos["short"].get("averagePrice", 0)), upl
             return 0, 0, 0, 0
         except Exception as e:
-            # If the position doesn't exist, OANDA might return 404 Position not found
-            if "not found" in str(e).lower() or "not_found" in str(e).lower():
+            # If the position doesn't exist, OANDA might return 404 Position not found or NO_SUCH_POSITION
+            e_str = str(e).lower()
+            if "not found" in e_str or "not_found" in e_str or "no_such_position" in e_str or "no position exists" in e_str:
                 return 0, 0, 0, 0
             print(f"⚠️ get_position error for {instrument}: {e}")
             return None
