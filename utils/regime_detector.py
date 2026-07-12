@@ -51,6 +51,7 @@ class RegimeDetector:
     ATR_VOLATILE_THRESHOLD = 1.5  # Above this = volatile (breakout territory)
     ADX_WEAK_THRESHOLD = 20.0    # Below this = no trend
     ADX_STRONG_THRESHOLD = 25.0  # Above this = strong trend
+    ADX_OVERPOWERING_THRESHOLD = 35.0 # Option 3 Override
 
     def __init__(
         self,
@@ -172,6 +173,10 @@ class RegimeDetector:
 
     def _classify_raw(self, atr_ratio: float, adx: float) -> str:
         """Raw regime classification from indicators (no confirmation)."""
+        # Option 3: Overpowering trend overrides volatility requirement
+        if adx >= self.ADX_OVERPOWERING_THRESHOLD:
+            return "BREAKOUT"
+
         calm_atr = atr_ratio < self.ATR_CALM_THRESHOLD
         volatile_atr = atr_ratio >= self.ATR_VOLATILE_THRESHOLD
         weak_trend = adx < self.ADX_WEAK_THRESHOLD
@@ -282,6 +287,8 @@ class RegimeDetector:
         parts = []
         parts.append(f"ATR×={atr_ratio}")
         parts.append(f"ADX={adx}")
+        if adx >= self.ADX_OVERPOWERING_THRESHOLD:
+            parts.append("Override")
         parts.append(f"SMA={sma_dir}")
         if self._cooldown_remaining > 0:
             parts.append(f"cooldown={self._cooldown_remaining}")

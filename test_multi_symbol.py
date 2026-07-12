@@ -32,6 +32,9 @@ SYMBOLS = {
     "USDJPY=X": "USD/JPY",
     "AUDUSD=X": "AUD/USD",
     "USDCHF=X": "USD/CHF",
+    "USDCAD=X": "USD/CAD",
+    "EURGBP=X": "EUR/GBP",
+    "NZDUSD=X": "NZD/USD",
 }
 
 INITIAL_CAPITAL = 10000
@@ -104,7 +107,8 @@ def test_symbol(symbol, symbol_name):
 
             # Check PM
             if position and pm:
-                pips_profit = (price - position["entry"]) / PIP_SIZE
+                pip_size = 0.01 if "JPY" in symbol else 0.0001
+                pips_profit = (price - position["entry"]) / pip_size
                 profit_usd = pips_profit * PIP_VALUE
 
                 pm_result = pm.manage_position(
@@ -134,7 +138,8 @@ def test_symbol(symbol, symbol_name):
 
             # Check SL
             if position and current_sl and price <= current_sl:
-                pips = (current_sl - position["entry"]) / PIP_SIZE
+                pip_size = 0.01 if "JPY" in symbol else 0.0001
+                pips = (current_sl - position["entry"]) / pip_size
                 capital += pips * PIP_VALUE
                 trades_count += 1
                 if pips > 0:
@@ -146,10 +151,12 @@ def test_symbol(symbol, symbol_name):
 
             # Execute action
             if action == 1 and position is None:
+                pip_size = 0.01 if "JPY" in symbol else 0.0001
                 position = {"entry": price, "id": i}
-                current_sl = price - (30 * PIP_SIZE)
+                current_sl = price - (30 * pip_size)
             elif action == 2 and position:
-                pips = (price - position["entry"]) / PIP_SIZE
+                pip_size = 0.01 if "JPY" in symbol else 0.0001
+                pips = (price - position["entry"]) / pip_size
                 capital += pips * PIP_VALUE
                 trades_count += 1
                 if pips > 0:
@@ -166,7 +173,8 @@ def test_symbol(symbol, symbol_name):
 
         # Close remaining
         if position:
-            pips = (test_data["Close"].iloc[-1] - position["entry"]) / PIP_SIZE
+            pip_size = 0.01 if "JPY" in symbol else 0.0001
+            pips = (test_data["Close"].iloc[-1] - position["entry"]) / pip_size
             capital += pips * PIP_VALUE
             trades_count += 1
             if pips > 0:

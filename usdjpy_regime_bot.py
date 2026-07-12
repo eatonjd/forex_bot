@@ -39,6 +39,7 @@ import pandas as pd
 
 from utils.mean_reversion import MeanReversionStrategy
 from utils.volatility_breakout import VolatilityBreakoutStrategy
+from utils.range_trading import RangeTradingStrategy
 from utils.regime_detector import RegimeDetector, RegimeState
 from utils.trade_logger import TradeLogger
 
@@ -89,12 +90,28 @@ class USDJPYRegimeBot:
             "pip_size": 0.01,
             "pip_value_fn": "jpy",
             "max_spread": 4.0,
+            "margin_rate": 0.05,
+            "strategies": ["MEAN_REVERSION", "BREAKOUT"],
+        },
+        "GBP_USD": {
+            "pip_size": 0.0001,
+            "pip_value_fn": "direct",
+            "max_spread": 4.0,
+            "margin_rate": 0.05,
+            "strategies": ["MEAN_REVERSION", "BREAKOUT"],
+        },
+        "USD_CAD": {
+            "pip_size": 0.0001,
+            "pip_value_fn": "jpy",
+            "max_spread": 4.0,
+            "margin_rate": 0.02,
             "strategies": ["MEAN_REVERSION", "BREAKOUT"],
         },
         "XAU_USD": {
             "pip_size": 0.01,
             "pip_value_fn": "direct",
             "max_spread": 50.0,
+            "margin_rate": 0.05,
             "strategies": ["BREAKOUT"],  # Gold: breakout only
         },
     }
@@ -106,7 +123,7 @@ class USDJPYRegimeBot:
         # Account setup — use -002 practice account for regime bot
         if mode == "paper":
             self.api_key = os.getenv("OANDA_API_KEY")
-            self.account_id = os.getenv("OANDA_ACCOUNT_ID_VOL", "101-001-38009813-002")
+            self.account_id = os.getenv("OANDA_ACCOUNT_ID", "101-001-38009813-001")
             self.environment = "practice"
         else:
             self.api_key = os.getenv("OANDA_API_KEY_LIVE")
@@ -116,7 +133,7 @@ class USDJPYRegimeBot:
         self.api = API(access_token=self.api_key, environment=self.environment)
 
         # Instruments
-        self.instruments = ["USD_JPY", "XAU_USD"]
+        self.instruments = ["USD_JPY", "GBP_USD", "USD_CAD"]
 
         # Strategy engines
         self.mr_strategy = MeanReversionStrategy(
@@ -128,24 +145,35 @@ class USDJPYRegimeBot:
             atr_expansion_factor=1.5, adx_period=14,
             adx_threshold=25.0, volume_factor=1.2,
         )
-
-        # Regime detector
-        self.regime_detector = RegimeDetector(
-            atr_period=14, atr_avg_lookback=50,
-            adx_period=14, sma_fast=20, sma_slow=50,
-            confirm_candles=2, cooldown_candles=2,
+        self.range_strategy = RangeTradingStrategy(
+            range_period=20, adx_period=14, adx_max=20.0,
+            buffer_pips=3.0, stop_loss_pips=15.0,
         )
+
+        # Regime detectors per instrument
+        self.regime_detectors = {}
+        for inst in self.instruments:
+            self.regime_detectors[inst] = RegimeDetector(
+                atr_period=14, atr_avg_lookback=50,
+                adx_period=14, sma_fast=20, sma_slow=50,
+                confirm_candles=2, cooldown_candles=2,
+            )
+
+        # Track last regime state per instrument for UI
+        self.last_regime_states = {}
 
         # Simulated balance for position sizing
         self.simulated_balance = 5000.0
 
         # Risk management
         self.risk_percent = 0.015  # 1.5% per trade
+        self.max_margin_utilization = 0.50  # Capped at 50% of NAV in margin usage
         self.max_daily_loss = -150.0
         self.daily_pnl = 0.0
 
         # MR-specific settings
         self.mr_stop_loss_pips = 20
+        self.mr_take_profit_pips = 20    # Fixed TP target for MR trades
         self.mr_trailing_trigger = 20.0  # Activate trailing at $20
         self.mr_trailing_amount = 10.0   # Trail by $10
         self.mr_max_holding_hours = 24
@@ -191,11 +219,12 @@ class USDJPYRegimeBot:
     def save_state(self):
         """Save bot state to local + GCS."""
         try:
+            rd_states = {inst: self.regime_detectors[inst].get_state_dict() for inst in self.instruments}
             state = {
                 "daily_pnl": self.daily_pnl,
                 "last_reset_date": str(self.last_reset_date),
+                "regime_detectors": rd_states,
                 "instrument_state": {},
-                "regime_detector": self.regime_detector.get_state_dict(),
                 "last_update": datetime.now().isoformat(),
             }
             for inst, istate in self._instrument_state.items():
@@ -248,9 +277,10 @@ class USDJPYRegimeBot:
                         self._instrument_state[inst]["trailing_active"] = idata.get("trailing_active", False)
                         self._instrument_state[inst]["peak_profit"] = idata.get("peak_profit", 0)
                         self._instrument_state[inst]["entry_regime"] = idata.get("entry_regime")
-                rd_state = state.get("regime_detector")
-                if rd_state:
-                    self.regime_detector.load_state_dict(rd_state)
+                rd_states = state.get("regime_detectors", {})
+                for inst, rd_state in rd_states.items():
+                    if inst in self.regime_detectors:
+                        self.regime_detectors[inst].load_state_dict(rd_state)
         except Exception as e:
             print(f"⚠️ State load error: {e}")
 
@@ -278,13 +308,13 @@ class USDJPYRegimeBot:
         """Send startup notification."""
         try:
             balance = self.get_account_balance()
-            regime = self.regime_detector._current_regime
+            regime = self.regime_detectors["USD_JPY"]._current_regime if "USD_JPY" in self.regime_detectors else "UNKNOWN"
             send_notification(
                 f"🚀 REGIME BOT Started\n"
                 f"Mode: {self.mode.upper()}\n"
                 f"Balance: ${balance:,.2f} (sim ${self.simulated_balance:,.0f})\n"
                 f"Instruments: {', '.join(self.instruments)}\n"
-                f"Current Regime: {regime}"
+                f"Current Regime (USD_JPY): {regime}"
             )
         except Exception as e:
             print(f"⚠️ Startup alert failed: {e}")
@@ -370,8 +400,12 @@ class USDJPYRegimeBot:
     # ─── Position Sizing ─────────────────────────────────────────
 
     def calculate_position_size(self, instrument: str, stop_distance_price: float) -> int:
-        """Position size based on simulated $5K balance."""
-        risk_amount = self.simulated_balance * self.risk_percent
+        """Position size based on actual account balance, capped by margin capacity."""
+        current_balance = self.get_account_balance()
+        if current_balance <= 0:
+            current_balance = self.simulated_balance
+            
+        risk_amount = current_balance * self.risk_percent
         cfg = self.INSTRUMENT_CONFIG[instrument]
         pip_size = cfg["pip_size"]
 
@@ -388,30 +422,70 @@ class USDJPYRegimeBot:
         stop_pips = stop_distance_price / pip_size
         size = int(risk_amount / (stop_pips * pip_value_per_unit))
 
+        # Margin/leverage safety cap:
+        # Margin required = size * margin_rate * unit_price_in_usd
+        margin_rate = cfg.get("margin_rate", 0.05)
+        # Convert first currency of instrument to USD to get unit price in USD
+        if instrument.startswith("USD_"):
+            unit_price_usd = 1.0
+        elif instrument.endswith("_USD"):
+            unit_price_usd = price
+        else:
+            unit_price_usd = price
+
+        max_margin = current_balance * self.max_margin_utilization
+        max_units = int(max_margin / (margin_rate * unit_price_usd))
+
+        if size > max_units:
+            print(f"⚠️ [{instrument}] Position size restricted by margin cap: {size}u -> {max_units}u (Max margin: ${max_margin:.2f})")
+            size = max_units
+
         if instrument == "XAU_USD":
             return max(1, min(size, 100))
         return max(1000, min(size, 100000))
 
     # ─── Order Execution ─────────────────────────────────────────
 
-    def open_position(self, instrument: str, direction: str, units: int, stop_dist: float, regime: str):
-        """Open a position with ATR or fixed stop."""
+    def open_position(self, instrument: str, direction: str, units: int, stop_dist: float, regime: str, take_profit_dist: float = None):
+        """Open a position with SL and optional TP."""
         try:
             sign = 1 if direction == "BUY" else -1
             cfg = self.INSTRUMENT_CONFIG[instrument]
+            
+            # OANDA enforces strict precision limits. JPY pairs max 3 decimals.
+            precision = 3 if "JPY" in instrument else 5
+            stop_dist_str = f"{stop_dist:.{precision}f}"
 
             order_data = {
                 "order": {
                     "type": "MARKET",
                     "instrument": instrument,
                     "units": str(sign * units),
-                    "stopLossOnFill": {"distance": f"{stop_dist:.5f}"},
+                    "stopLossOnFill": {"distance": stop_dist_str},
                 }
             }
+
+            if take_profit_dist is not None:
+                take_profit_dist_str = f"{take_profit_dist:.{precision}f}"
+                order_data["order"]["takeProfitOnFill"] = {"distance": take_profit_dist_str}
+
             r = OrderCreate(accountID=self.account_id, data=order_data)
             self.api.request(r)
 
             fill = r.response.get("orderFillTransaction", {})
+            if not fill:
+                cancel_trans = r.response.get("orderCancelTransaction", {})
+                reject_trans = r.response.get("orderRejectTransaction", {})
+                reason = (
+                    cancel_trans.get("reason")
+                    or reject_trans.get("rejectReason")
+                    or "Unknown OANDA reject reason"
+                )
+                err_msg = f"❌ [{instrument}] Order rejected by OANDA: {reason}"
+                print(err_msg)
+                send_notification(err_msg)
+                return False, 0
+
             price = float(fill.get("price", 0))
 
             istate = self._instrument_state[instrument]
@@ -419,10 +493,13 @@ class USDJPYRegimeBot:
             istate["entry_regime"] = regime
 
             sl_pips = stop_dist / cfg["pip_size"]
-            print(f"✅ [{instrument}] {direction} {units}u @ {price} | SL: {sl_pips:.0f}p | Regime: {regime}")
+            tp_pips_str = f" | TP: {take_profit_dist / cfg['pip_size']:.0f}p" if take_profit_dist else ""
+            print(f"✅ [{instrument}] {direction} {units}u @ {price} | SL: {sl_pips:.0f}p{tp_pips_str} | Regime: {regime}")
+            
+            tp_alert_str = f"SL: {sl_pips:.0f} pips | TP: {take_profit_dist / cfg['pip_size']:.0f} pips | Regime: {regime}" if take_profit_dist else f"SL: {sl_pips:.0f} pips | Regime: {regime}"
             send_notification(
                 f"🎯 {instrument} {direction} {units}u @ {price}\n"
-                f"SL: {sl_pips:.0f} pips | Regime: {regime}"
+                f"{tp_alert_str}"
             )
 
             self.save_state()
@@ -441,6 +518,7 @@ class USDJPYRegimeBot:
                 logger.log_forex_trade(
                     action="OPEN",
                     direction="LONG" if direction == "BUY" else "SHORT",
+                    symbol=instrument,  # Fix symbol logging bug
                     units=units, price=price,
                     account_type=self.mode,
                     signal_data=self.last_signal_data,
@@ -451,7 +529,12 @@ class USDJPYRegimeBot:
 
             return True, price
         except Exception as e:
-            print(f"❌ [{instrument}] Order error: {e}")
+            err_msg = f"❌ [{instrument}] Order execution failed: {e}"
+            print(err_msg)
+            try:
+                send_notification(err_msg)
+            except Exception as notifier_err:
+                print(f"⚠️ Failed to send order failure alert: {notifier_err}")
             return False, 0
 
     def close_position(self, instrument: str):
@@ -484,6 +567,7 @@ class USDJPYRegimeBot:
                 logger.log_forex_trade(
                     action="CLOSE",
                     direction="LONG" if pos_dir == 1 else "SHORT",
+                    symbol=instrument,  # Fix symbol logging bug
                     units=pos_units, pnl=pnl,
                     account_type=self.mode,
                     signal_data=self.last_signal_data,
@@ -501,7 +585,12 @@ class USDJPYRegimeBot:
             self.save_state()
             return True, pnl
         except Exception as e:
-            print(f"❌ [{instrument}] Close error: {e}")
+            err_msg = f"❌ [{instrument}] Close execution failed: {e}"
+            print(err_msg)
+            try:
+                send_notification(err_msg)
+            except Exception as notifier_err:
+                print(f"⚠️ Failed to send close failure alert: {notifier_err}")
             return False, 0
 
     # ─── Main Loop ───────────────────────────────────────────────
@@ -554,15 +643,37 @@ class USDJPYRegimeBot:
                     self.close_position(inst)
             return
 
-        # ─── Detect Regime on USD/JPY (primary instrument) ───
-        df_jpy = self.get_candles("USD_JPY", count=100)
-        if df_jpy.empty:
-            print("⚠️ No USD/JPY candle data")
+        # Process each instrument independently
+        for inst in self.instruments:
+            self._process_instrument(inst)
+
+    def _process_instrument(self, instrument: str):
+        """Process a single instrument under its own regime."""
+        cfg = self.INSTRUMENT_CONFIG[instrument]
+        istate = self._instrument_state[instrument]
+
+        # Get current position first to determine if we should throttle
+        pos_info = self.get_current_position(instrument)
+        if pos_info is None:
+            print(f"⚠️ [{instrument}] Position sync error, skipping")
+            return
+        pos_dir, pos_units, entry_price, upl = pos_info
+
+        # Throttle check: If flat, only scan on M15 candle boundaries (America/New_York)
+        now_et = datetime.now(pytz.timezone("America/New_York"))
+        if pos_dir == 0 and (now_et.minute % 15 != 0):
             return
 
-        regime_state = self.regime_detector.detect(df_jpy)
-        self.last_regime_state = regime_state
-
+        # Get candles for this instrument
+        df = self.get_candles(instrument, count=100)
+        if df.empty:
+            print(f"⚠️ No candle data for {instrument}")
+            return
+            
+        # Detect Regime for this specific instrument
+        regime_state = self.regime_detectors[instrument].detect(df)
+        self.last_regime_states[instrument] = regime_state
+        
         # Regime display
         regime_emoji = {
             "MEAN_REVERSION": "📊",
@@ -573,34 +684,10 @@ class USDJPYRegimeBot:
         confirmed_str = "✓" if regime_state.confirmed else "…"
         print(
             f"\n{'='*60}\n"
-            f"{emoji} REGIME: {regime_state.regime} ({regime_state.confidence}%) {confirmed_str}\n"
+            f"{emoji} [{instrument}] REGIME: {regime_state.regime} ({regime_state.confidence}%) {confirmed_str}\n"
             f"   {regime_state.reason}\n"
             f"{'='*60}"
         )
-
-        # Process each instrument
-        for inst in self.instruments:
-            self._process_instrument(inst, df_jpy, regime_state)
-
-    def _process_instrument(self, instrument: str, df_jpy: pd.DataFrame, regime_state: RegimeState):
-        """Process a single instrument under the current regime."""
-        cfg = self.INSTRUMENT_CONFIG[instrument]
-        istate = self._instrument_state[instrument]
-
-        # Get candles for this instrument
-        if instrument == "USD_JPY":
-            df = df_jpy
-        else:
-            df = self.get_candles(instrument, count=100)
-            if df.empty:
-                return
-
-        # Get position
-        pos_info = self.get_current_position(instrument)
-        if pos_info is None:
-            print(f"⚠️ [{instrument}] Position sync error, skipping")
-            return
-        pos_dir, pos_units, entry_price, upl = pos_info
 
         current_price = df.iloc[-1]["Close"]
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -617,9 +704,15 @@ class USDJPYRegimeBot:
             if entry_regime == "BREAKOUT":
                 max_hold = self.vol_max_holding_hours
                 trail_trigger = self.vol_trailing_trigger
-            else:
+                use_trailing = True
+            elif entry_regime == "MEAN_REVERSION":
                 max_hold = self.mr_max_holding_hours
                 trail_trigger = self.mr_trailing_trigger
+                use_trailing = True
+            else:  # RANGE
+                max_hold = self.mr_max_holding_hours
+                trail_trigger = self.mr_trailing_trigger
+                use_trailing = False  # Range trades still use fixed TP at channel boundaries
 
             trail_str = " 🎯" if istate["trailing_active"] else ""
             print(
@@ -636,23 +729,25 @@ class USDJPYRegimeBot:
                 return
 
             # Trailing profit
-            if upl >= trail_trigger and not istate["trailing_active"]:
-                istate["trailing_active"] = True
-                istate["peak_profit"] = upl
-                print(f"🎯 [{instrument}] TRAILING at ${upl:+.2f}")
-                send_notification(f"🎯 {instrument} Trailing at ${upl:+.2f}")
+            if use_trailing and trail_trigger is not None:
+                if upl >= trail_trigger and not istate["trailing_active"]:
+                    istate["trailing_active"] = True
+                    istate["peak_profit"] = upl
+                    print(f"🎯 [{instrument}] TRAILING at ${upl:+.2f}")
+                    send_notification(f"🎯 {instrument} Trailing at ${upl:+.2f}")
 
-            if istate["trailing_active"] and upl > istate["peak_profit"]:
-                istate["peak_profit"] = upl
+                if istate["trailing_active"] and upl > istate["peak_profit"]:
+                    istate["peak_profit"] = upl
 
-            if istate["trailing_active"]:
-                trail_amt = max(10, istate["peak_profit"] * 0.4)
-                if upl <= istate["peak_profit"] - trail_amt:
-                    print(f"🔒 [{instrument}] TRAILING STOP ${upl:+.2f}")
-                    ok, rpnl = self.close_position(instrument)
-                    if ok:
-                        send_notification(f"🔒 {instrument} Trail stop ${rpnl:+.2f}")
-                    return
+                if istate["trailing_active"]:
+                    # Tightened giveback for Breakout trades: 15% of peak profit (min $5, max $15)
+                    trail_amt = max(5.0, min(15.0, istate["peak_profit"] * 0.15))
+                    if upl <= istate["peak_profit"] - trail_amt:
+                        print(f"🔒 [{instrument}] TRAILING STOP ${upl:+.2f}")
+                        ok, rpnl = self.close_position(instrument)
+                        if ok:
+                            send_notification(f"🔒 {instrument} Trail stop ${rpnl:+.2f}")
+                        return
 
             return  # In position, skip entry logic
 
@@ -686,9 +781,19 @@ class USDJPYRegimeBot:
             # that are appropriate for the SMA direction
             sma_dir = regime_state.sma_direction
             if signal == "BUY" and sma_dir == "BEARISH":
-                return  # Don't buy in bearish SMA
-            if signal == "SELL" and sma_dir == "BULLISH":
-                return  # Don't sell in bullish SMA
+                signal = "HOLD"
+            elif signal == "SELL" and sma_dir == "BULLISH":
+                signal = "HOLD"
+
+            # If Mean Reversion has no signal, fall back to Range Trading Strategy
+            if signal == "HOLD":
+                signal_data_range = self.range_strategy.get_signal(df, idx, cfg["pip_size"])
+                if signal_data_range["signal"] != "HOLD":
+                    signal_data = signal_data_range
+                    signal_data["regime"] = "RANGE"  # Mark as range trade
+                    signal = signal_data["signal"]
+                    confidence = signal_data["confidence"]
+                    reason = signal_data.get("reason", "")
 
         else:  # BREAKOUT
             signal_data = self.vol_strategy.get_signal(df, idx)
@@ -724,13 +829,20 @@ class USDJPYRegimeBot:
         # Execute entry
         if signal in ["BUY", "SELL"] and confidence >= 60:
             if active_regime == "MEAN_REVERSION":
-                # MR: fixed stop loss in pips
-                stop_dist = self.mr_stop_loss_pips * cfg["pip_size"]
+                if signal_data.get("regime") == "RANGE":
+                    # Range strategy: use dynamic range-based stop/profit targets
+                    stop_dist = signal_data["stop_dist"]
+                    take_profit_dist = signal_data["take_profit_dist"]
+                else:
+                    # MR: fixed stop loss in pips, no fixed Take Profit (handled by trailing stop)
+                    stop_dist = self.mr_stop_loss_pips * cfg["pip_size"]
+                    take_profit_dist = None
             else:
                 # Breakout: ATR-based dynamic stop
                 stop_dist = self.vol_strategy.calculate_dynamic_stop(
                     df, idx, self.vol_stop_atr_mult
                 )
+                take_profit_dist = None
 
             if stop_dist <= 0:
                 print(f"   ⚠️ [{instrument}] Bad stop distance")
@@ -740,27 +852,38 @@ class USDJPYRegimeBot:
             sl_pips = stop_dist / cfg["pip_size"]
 
             action = "BUY" if signal == "BUY" else "SELL"
+            tp_pips_str = f" | TP: {take_profit_dist / cfg['pip_size']:.0f}p" if take_profit_dist else ""
+            
+            trade_regime = "RANGE" if signal_data.get("regime") == "RANGE" else active_regime
             print(
-                f"🚀 [{instrument}] {active_regime} {action}: {units}u | "
-                f"SL: {sl_pips:.0f}p"
+                f"🚀 [{instrument}] {trade_regime} {action}: {units}u | "
+                f"SL: {sl_pips:.0f}p{tp_pips_str}"
             )
-            self.open_position(instrument, signal, units, stop_dist, active_regime)
+            self.open_position(instrument, signal, units, stop_dist, trade_regime, take_profit_dist)
 
     # ─── Health Endpoint Data ────────────────────────────────────
 
     def get_health_data(self) -> dict:
         """Return health data for the endpoint."""
-        # Read from detector directly so it works on startup/market close since state is loaded
-        regime_name = self.regime_detector._current_regime
-        # Call market open function
-        market_open, _ = is_forex_market_open()
+        # Use USD_JPY as the main regime for the health payload
+        regime_name = "UNKNOWN"
+        regime_reason = ""
+        regime_confirmed = False
         
-        # Synthesize a simple payload from internal state
+        if "USD_JPY" in self.regime_detectors:
+            rd = self.regime_detectors["USD_JPY"]
+            regime_name = rd._current_regime
+            regime_confirmed = rd._cooldown_remaining == 0 and rd._pending_regime is None
+            if "USD_JPY" in self.last_regime_states:
+                regime_reason = getattr(self.last_regime_states["USD_JPY"], "reason", "")
+
+        market_open, _ = is_forex_market_open()
         return {
             "bot": "regime_switcher",
             "mode": self.mode,
             "regime": regime_name,
-            "regime_confirmed": self.regime_detector._cooldown_remaining == 0 and self.regime_detector._pending_regime is None,
+            "regime_confirmed": regime_confirmed,
+            "regime_reason": regime_reason,
             "market_open": market_open,
             "instruments": self.instruments,
             "daily_pnl": round(self.daily_pnl, 2),

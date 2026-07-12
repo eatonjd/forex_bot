@@ -168,21 +168,6 @@ def generate_command_center_html():
         label="Mean Reversion (Paper)"
     )
 
-    # 2. Volatility Breakout Paper (-002)
-    vol_paper = fetch_account_data(
-        practice_api,
-        os.getenv("OANDA_ACCOUNT_ID_VOL", "101-001-38009813-002"),
-        instrument="USD_JPY",
-        label="Volatility Breakout (Paper)"
-    )
-    # Also fetch XAU/USD trades for vol bot
-    vol_xau = fetch_account_data(
-        practice_api,
-        os.getenv("OANDA_ACCOUNT_ID_VOL", "101-001-38009813-002"),
-        instrument="XAU_USD",
-        label="Vol Bot Gold"
-    )
-
     # 3. Mean Reversion Live
     live_data = {"label": "Mean Reversion (LIVE)", "balance": 0, "unrealized_pl": 0,
                  "equity": 0, "trades": [], "open_trades": [], "error": None}
@@ -197,7 +182,6 @@ def generate_command_center_html():
     services = {
         "forex-trading-bot": "https://forex-trading-bot-489986279698.us-central1.run.app/",
         "forex-bot-live": "https://forex-bot-live-489986279698.us-central1.run.app/",
-        "forex-bot-vol": "https://forex-bot-vol-489986279698.us-central1.run.app/",
     }
     health_status = {}
     for name, url in services.items():
@@ -208,14 +192,15 @@ def generate_command_center_html():
                 uptime_h = d.get("uptime", 0) / 3600
                 bot_data = d.get("bot_data", {})
                 regime = bot_data.get("regime", "UNKNOWN")
+                regime_reason = bot_data.get("regime_reason", "")
                 market_open = bot_data.get("market_open", True)
                 
                 if not market_open:
                     regime = "Markets Closed 🌙"
                 
-                health_status[name] = {"status": "healthy", "uptime": f"{uptime_h:.0f}h", "regime": regime}
+                health_status[name] = {"status": "healthy", "uptime": f"{uptime_h:.0f}h", "regime": regime, "regime_reason": regime_reason}
             else:
-                health_status[name] = {"status": "error", "uptime": "-", "regime": "UNKNOWN"}
+                health_status[name] = {"status": "error", "uptime": "-", "regime": "UNKNOWN", "regime_reason": ""}
         except:
             health_status[name] = {"status": "offline", "uptime": "-", "regime": "UNKNOWN"}
 
@@ -227,31 +212,17 @@ def generate_command_center_html():
     live_trades_filtered = [t for t in live_data["trades"] if t.get("openTime", "")[:10] >= LIVE_SINCE_DATE]
     live_stats_all = calc_stats(live_trades_filtered)
 
-    # Vol: filter out old v1 bot trades from the -002 account
-    vol_trades_filtered = [t for t in vol_paper["trades"] if t.get("openTime", "")[:10] >= VOL_SINCE_DATE]
-    vol_xau_filtered = [t for t in vol_xau["trades"] if t.get("openTime", "")[:10] >= VOL_SINCE_DATE]
-    vol_stats_all = calc_stats(vol_trades_filtered)
-    vol_xau_stats = calc_stats(vol_xau_filtered)
-
-    # Combined vol trades
-    vol_combined_pnl = vol_stats_all["pnl"] + vol_xau_stats["pnl"]
-    vol_combined_count = vol_stats_all["count"] + vol_xau_stats["count"]
-    vol_combined_wins = vol_stats_all["wins"] + vol_xau_stats["wins"]
-    vol_combined_wr = (vol_combined_wins / vol_combined_count * 100) if vol_combined_count > 0 else 0
-
     # --- Total portfolio ---
-    total_pnl = mr_stats_all["pnl"] + live_stats_all["pnl"] + vol_combined_pnl
-    total_equity = mr_paper["equity"] + live_data["equity"] + vol_paper["equity"]
+    total_pnl = mr_stats_all["pnl"] + live_stats_all["pnl"]
+    total_equity = mr_paper["equity"] + live_data["equity"]
 
     # Build trade rows (live and vol use filtered trades)
     mr_trade_rows = build_trade_rows(mr_paper["trades"])
     live_trade_rows = build_trade_rows(live_trades_filtered)
-    vol_trade_rows = build_trade_rows(vol_trades_filtered)
 
     # Open positions
     mr_open_html = build_open_positions(mr_paper["open_trades"])
     live_open_html = build_open_positions(live_data["open_trades"])
-    vol_open_html = build_open_positions(vol_paper["open_trades"] + vol_xau["open_trades"])
 
     # Health dots
     def health_dot(name):
@@ -310,8 +281,9 @@ def generate_command_center_html():
         /* Bot Cards Grid */
         .bots-grid {{
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 20px;
+            grid-template-columns: repeat(2, minmax(320px, 450px));
+            justify-content: center;
+            gap: 24px;
             margin-bottom: 28px;
         }}
         @media (max-width: 1024px) {{ .bots-grid {{ grid-template-columns: 1fr; }} }}
@@ -421,17 +393,19 @@ def generate_command_center_html():
             <div class="portfolio-stat">
                 <div class="label">Active Bots</div>
                 <div class="value">3</div>
+                <div class="value">2</div>
             </div>
         </div>
 
         <!-- Bot Cards -->
         <div class="bots-grid">
-            <!-- Mean Reversion Paper -->
-            <div class="bot-card mr-paper">
+            <!-- Unified Regime Meta-Bot -->
+            <div class="bot-card paper">
                 <div class="bot-header">
                     <div>
-                        <div class="bot-name">📊 Mean Reversion</div>
-                        <div style="color:#8b949e;font-size:0.75rem;">USD/JPY • Phase 7.3</div>
+                        <div class="bot-name">⚙️ Unified Regime Bot</div>
+                        <div style="color:#8b949e;font-size:0.75rem;">Regime: <strong style="color:#e6edf3">{health_status.get("forex-trading-bot", {}).get("regime", "UNKNOWN")}</strong></div>
+                        <div style="color:#8b949e;font-size:0.65rem;margin-top:2px;">{health_status.get("forex-trading-bot", {}).get("regime_reason", "")}</div>
                     </div>
                     <span class="bot-badge badge-paper">Paper</span>
                 </div>
@@ -498,53 +472,6 @@ def generate_command_center_html():
                 </div>
             </div>
 
-            <!-- Unified Regime Bot -->
-            <div class="bot-card vol">
-                <div class="bot-header">
-                    <div>
-                        <div class="bot-name" style="color: #f85149">⚙️ Unified Regime Bot</div>
-                        <div style="color:#8b949e;font-size:0.75rem;">Regime: <strong style="color:#e6edf3">{health_status.get("forex-bot-vol", {}).get("regime", "UNKNOWN")}</strong></div>
-                    </div>
-                    <span class="bot-badge badge-vol">Paper</span>
-                </div>
-                <div class="bot-balance">${vol_paper["balance"]:,.2f}</div>
-                <div class="bot-upl {"positive" if vol_paper["unrealized_pl"] >= 0 else "negative"}">
-                    Unrealized: ${vol_paper["unrealized_pl"]:+.2f}
-                </div>
-                <div class="health-row">{health_dot("forex-bot-vol")}</div>
-                <div class="stats-row">
-                    <div class="stat-item">
-                        <div class="stat-label">Trades</div>
-                        <div class="stat-val">{vol_combined_count}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Win Rate</div>
-                        <div class="stat-val {"positive" if vol_combined_wr >= 50 else "negative"}">{vol_combined_wr:.0f}%</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Total P/L</div>
-                        <div class="stat-val {"positive" if vol_combined_pnl >= 0 else "negative"}">${vol_combined_pnl:+,.2f}</div>
-                    </div>
-                </div>
-                <div class="stats-row" style="margin-top:-4px">
-                    <div class="stat-item">
-                        <div class="stat-label">JPY Trades</div>
-                        <div class="stat-val">{vol_stats_all["count"]}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Gold Trades</div>
-                        <div class="stat-val">{vol_xau_stats["count"]}</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Gold P/L</div>
-                        <div class="stat-val {"positive" if vol_xau_stats["pnl"] >= 0 else "negative"}">${vol_xau_stats["pnl"]:+,.2f}</div>
-                    </div>
-                </div>
-                <div class="open-positions">{vol_open_html}</div>
-                <div class="trades-section">
-                    {f'<button class="trades-toggle" onclick="toggleTrades(\'vol\')">▼ Recent Trades ({min(20, vol_stats_all["count"])})</button><div id="vol-trades" class="trades-body"><table><thead><tr><th>Date</th><th>Dir</th><th>Units</th><th>Entry</th><th>Exit</th><th>P/L</th><th>Hold</th></tr></thead><tbody>{vol_trade_rows}</tbody></table></div>' if vol_combined_count > 0 else '<div class="no-positions">No trades yet — waiting for breakout signal</div>'}
-                </div>
-            </div>
         </div>
 
         <div class="footer">
