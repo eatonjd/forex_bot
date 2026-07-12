@@ -1,175 +1,70 @@
-# 🤖 USD/JPY Mean Reversion Trading Bot
+# 🤖 Multi-Symbol Regime Trading Bot
 
-An automated forex trading bot running on Google Cloud that trades USD/JPY using a mean reversion strategy with Bollinger Bands and RSI indicators.
-
-## 📊 Strategy Overview
-
-| Component | Details |
-|-----------|---------|
-| **Pair** | USD/JPY |
-| **Timeframe** | M15 (15 minutes) |
-| **Indicators** | Bollinger Bands (20, 2σ) + RSI (14) |
-| **Backtest Return** | +957% over 60 days |
-| **Win Rate** | 63.5% |
-
-### Entry Signals
-
-- **BUY** → RSI < 30 (oversold) + price touching lower Bollinger Band
-- **SELL** → RSI > 70 (overbought) + price touching upper Bollinger Band
+An automated multi-pair forex trading bot running on Google Cloud Run that dynamically switches between **Volatility Breakout**, **Mean Reversion**, and **Range Trading** strategies based on real-time market regimes.
 
 ---
 
-## 💰 Risk Management
+## 📊 Strategy & Regime Overview
 
-### Trailing Profit Stop
+The bot supports **USD/JPY**, **GBP/USD**, and **USD/CAD** concurrently on the **M15 timeframe**. It continuously analyzes market structure to classify the environment and apply the optimal strategy:
 
-Instead of taking profit at a fixed level, the bot uses a trailing stop:
+| Regime | Indicator Conditions | Strategy Applied | Exit Mechanism |
+| :--- | :--- | :--- | :--- |
+| **BREAKOUT** | ATR expanding (> 1.5× avg), ADX > 25 | **Volatility Breakout** (Trade with the trend) | Trailing Stop (15% giveback) |
+| **MEAN_REVERSION** | ATR quiet, ADX < 25, RSI overbought/oversold | **Mean Reversion** (Trade counter-trend) | Trailing Stop (USD-based) |
+| **MEAN_REVERSION (Fallback)** | ATR quiet, ADX < 20, BB in HOLD | **Range Trading** (Buy/Sell channel bounces) | Fixed Take Profit at opposite boundary |
+| **TRANSITIONAL** | Changing dynamics | **No entries** (Cooldown phase) | N/A |
 
-1. **Activation**: When unrealized profit reaches **$100**
-2. **Tracking**: Records peak profit as it rises
-3. **Exit**: Closes position when profit drops **$50** from peak
-
-This allows profits to run during strong moves while protecting gains.
-
-### Pyramiding (Scaling In)
-
-The bot adds to winning positions:
-
-| Parameter | Value |
-|-----------|-------|
-| Max additions | 3 |
-| Minimum profit to add | $25 |
-| Addition size | 50% of initial |
-
-**Example progression:**
-
-```
-Initial position: 50,000 units
-At +$25 profit: Add 25,000 units ← Scale-in #1
-At +$50 profit: Add 25,000 units ← Scale-in #2
-At +$75 profit: Add 25,000 units ← Scale-in #3
-─────────────────────────────────────────────
-Maximum position: 125,000 units (2.5x leverage)
-```
-
-### Safety Limits
-
-- **Daily loss limit**: -$200 (stops trading for the day)
-- **Risk per trade**: 2% of account balance
+### 🛠️ Sub-Strategies
+1. **Volatility Breakout:** Triggers buy/sell orders when price breaks out of the Donchian channel during high-volume ATR expansions.
+2. **Mean Reversion:** Enters buy/sell orders on Bollinger Band boundaries with RSI filters (<30 / >70).
+3. **Range Trading:** Maps local extrema over a 20-candle lookback to establish horizontal support/resistance boundaries, buying support bounces and selling resistance bounces.
 
 ---
 
-## 🏗️ Architecture
+## 🛡️ Risk Management & Safety Caps
 
-```
-┌─────────────────────────────────────────────────────┐
-│                  Google Cloud Run                    │
-│  ┌───────────────────────────────────────────────┐  │
-│  │           USD/JPY Mean Reversion Bot          │  │
-│  │                                               │  │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────────┐   │  │
-│  │  │  OANDA  │  │   RSI   │  │  Bollinger  │   │  │
-│  │  │   API   │  │ < 30/>70│  │    Bands    │   │  │
-│  │  └────┬────┘  └────┬────┘  └──────┬──────┘   │  │
-│  │       │            │              │          │  │
-│  │       v            v              v          │  │
-│  │  ┌──────────────────────────────────────┐    │  │
-│  │  │         Signal Generator             │    │  │
-│  │  │    (Buy/Sell/Hold Decision)          │    │  │
-│  │  └───────────────┬──────────────────────┘    │  │
-│  │                  │                          │  │
-│  │                  v                          │  │
-│  │  ┌──────────────────────────────────────┐    │  │
-│  │  │      Position Management             │    │  │
-│  │  │  • Trailing Stop ($100 → $50 trail)  │    │  │
-│  │  │  • Pyramiding (up to 3 scale-ins)    │    │  │
-│  │  └───────────────┬──────────────────────┘    │  │
-│  │                  │                          │  │
-│  │                  v                          │  │
-│  │  ┌──────────────────────────────────────┐    │  │
-│  │  │         Notifications                │    │  │
-│  │  │    (Telegram, ntfy.sh, SMS)          │    │  │
-│  │  └──────────────────────────────────────┘    │  │
-│  └───────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────┘
-```
+* **Margin Safety Cap:** Restricts total margin used across all open positions to a maximum of **50% of the account Net Asset Value (NAV)**.
+* **Stop Loss Cap:** Dynamically caps maximum stop-loss distances to **40 pips** to prevent excessive risk on highly volatile breakouts.
+* **Daily Loss Limit:** Closes all positions and halts trading for the day if realized or unrealized losses exceed **-$200**.
+* **Risk Per Position:** Automatically sizes units to risk exactly **2%** of account balance based on the stop-loss distance.
 
 ---
 
-## 📈 Performance
+## ⏱️ Dynamic 1-Minute Exit Monitoring
 
-### Backtest Results (6-Month Historical Data)
-
-| Strategy | Pair | Timeframe | Return | Trades | Win Rate |
-|----------|------|-----------|--------|--------|----------|
-| Mean Reversion | USD/JPY | M15 | **+957%** | 85 | 63.5% |
-| SMC | USD/JPY | H1 | +104% | 29 | 34.5% |
-| Buy & Hold | USD/JPY | — | -0.3% | — | — |
-| Random | EUR/USD | H1 | +17% | 180 | 50% |
+To protect profits and exit trades with high resolution, the bot runs on a **1-minute execution frequency**:
+* **Active Position:** The bot runs every minute to evaluate trailing stops, time stops, and target exits with high resolution.
+* **Flat State:** If no positions are active, the bot throttles execution and skips candle scans unless it is on a 15-minute boundary (`minute % 15 == 0`), conserving API resources.
 
 ---
 
-## 🔧 Configuration
+## 🏗️ Deployment
 
-```python
-# Strategy Parameters
-bb_period = 20          # Bollinger Band period
-bb_std = 2.0            # Standard deviations
-rsi_period = 14         # RSI lookback
-rsi_oversold = 30       # Buy threshold
-rsi_overbought = 70     # Sell threshold
+The bot runs on **Google Cloud Run** triggered by **Google Cloud Scheduler** crons.
 
-# Risk Management
-risk_percent = 0.02     # 2% per trade
-daily_target = 100      # Trailing stop activation
-trailing_amount = 50    # Trail distance
-max_daily_loss = -200   # Stop trading limit
-
-# Pyramiding
-max_scale_ins = 3       # Maximum additions
-min_profit_to_add = 25  # Required profit to add
-scale_in_size_pct = 0.5 # 50% of initial size
-```
-
----
-
-## 🚀 Deployment
-
-The bot runs on **Google Cloud Run** with:
-
-- Automatic scaling
-- 24/7 operation
-- Health monitoring
-- Cost-efficient (scales to zero when idle)
-
-### Commands
+### Useful CLI Commands
 
 ```bash
-# View live logs
-gcloud run services logs tail forex-trading-bot --region us-central1
+# Deploy code updates to Cloud Run
+gcloud run deploy forex-bot-live --source . --region us-central1 --project big-e-trading-bot --quiet
 
-# Health check
-curl https://forex-trading-bot-489986279698.us-central1.run.app/health
+# View live execution logs
+gcloud run services logs tail forex-bot-live --region us-central1 --project big-e-trading-bot
 
-# Local testing
-python3 usdjpy_mean_reversion.py --mode paper --once
+# Run a local paper trading dry-run once
+python3 -c "from usdjpy_regime_bot import USDJPYRegimeBot; USDJPYRegimeBot(mode='paper').run_once()"
 ```
 
 ---
 
-## 📱 Notifications
+## 📱 Notifications & Alerts
 
-The bot sends real-time alerts via:
-
-- **Telegram** — Trade entries, exits, profit targets
-- **ntfy.sh** — Push notifications (no account required)
-- **SMS** — Critical alerts (optional)
-
----
-
-## ⚠️ Disclaimer
-
-This bot is for educational purposes and paper trading. Past performance does not guarantee future results. Trading forex involves significant risk of loss. Always use proper risk management and never trade with money you can't afford to lose.
+Real-time alert integrations dispatch notifications for:
+* **Trade Entries & Exits:** Direction, units, entry price, and current profit/loss.
+* **OANDA Order Rejections:** Instant alerts with specific cancellation/rejection reasons (e.g. insufficient margin).
+* **Execution Exceptions:** Network errors, timeouts, or broker connection failures.
+* **Channels Supported:** Telegram, ntfy.sh, and SMS.
 
 ---
 
@@ -177,16 +72,17 @@ This bot is for educational purposes and paper trading. Past performance does no
 
 ```
 forex_bot/
-├── usdjpy_mean_reversion.py  # Main trading bot
-├── cloud_run_server.py       # Cloud Run entry point
-├── config.py                 # Configuration
+├── usdjpy_regime_bot.py   # Main multi-symbol regime trading bot
+├── cloud_run_server.py    # Cloud Run server wrapper
+├── command_center.py      # Streamlit/CLI dashboard & control panel
 ├── utils/
-│   ├── mean_reversion.py     # Strategy logic
-│   ├── notifications.py      # Alert system
-│   └── oanda_api.py          # Broker integration
-└── deploy_gcloud.sh          # Deployment script
+│   ├── regime_detector.py # Regime classification (ATR, ADX, SMA)
+│   ├── range_trading.py   # Range strategy (extrema, support/resistance)
+│   ├── notifications.py   # Telegram, ntfy, SMS notifications
+│   └── oanda_api.py       # V20 broker interface wrapper
+└── deploy_gcloud.sh       # Deploy script
 ```
 
 ---
 
-*Built with Python, OANDA API, and deployed on Google Cloud Run*
+*Built with Python, OANDA v20 API, and deployed on Google Cloud Run*
