@@ -33,9 +33,63 @@ bot_status = {
 }
 
 
-@app.route("/")
+from flask import request
+
+bot_lock = threading.Lock()
+bot = None
+
+def init_bot():
+    global bot
+    if bot is not None:
+        return
+    try:
+        bot_type = os.getenv("BOT_TYPE", "regime").lower()
+        if bot_type == "regime":
+            print("📦 Importing USD/JPY Regime Bot...", flush=True)
+            from usdjpy_regime_bot import USDJPYRegimeBot
+            print("🏗️  Instantiating USD/JPY Regime Bot...", flush=True)
+            bot = USDJPYRegimeBot(mode=os.getenv("BOT_MODE", "paper"))
+            bot_status["initialization"]["oanda_connected"] = True
+            bot_status["initialization"]["model_loaded"] = True
+            bot_status["initialization"]["position_manager_ready"] = True
+            bot_status["initialization"]["decision_reasoning_ready"] = True
+            bot_status["initialization"]["completed"] = True
+            print("✅ Regime bot initialized", flush=True)
+    except Exception as e:
+        print(f"❌ Bot init error: {e}", flush=True)
+        bot_status["initialization"]["error"] = str(e)
+
+@app.route("/", methods=["GET", "POST"])
 def health():
-    """Health check endpoint"""
+    """Health check (GET) and trigger run (POST) endpoint"""
+    if request.method == "POST":
+        init_bot()
+        if not bot:
+            return jsonify({"status": "error", "message": "Bot not initialized", "error": bot_status["initialization"]["error"]}), 503
+            
+        acquired = bot_lock.acquire(blocking=False)
+        if not acquired:
+            return jsonify({"status": "running", "message": "Bot execution already in progress"}), 409
+            
+        try:
+            bot_status["last_check"] = time.time()
+            bot.run_once()
+            bot_status["iteration"] += 1
+            bot_status["last_heartbeat"] = time.time()
+            if hasattr(bot, 'get_health_data'):
+                bot_status["bot_data"] = bot.get_health_data()
+            return jsonify({
+                "status": "success",
+                "iteration": bot_status["iteration"],
+                "last_heartbeat": bot_status["last_heartbeat"]
+            }), 200
+        except Exception as e:
+            bot_status["errors"] += 1
+            print(f"❌ Execution error: {e}", flush=True)
+            return jsonify({"status": "error", "message": str(e)}), 500
+        finally:
+            bot_lock.release()
+            
     resp = {
         "status": "healthy",
         "bot_running": bot_status["running"],
@@ -588,164 +642,6 @@ def command_center():
 
 
 
-def run_trading_bot():
-    """Run the actual trading bot"""
-    from version import __version__, __commit__
-    import sys
-    from datetime import datetime
-
-    sys.path.insert(0, "/app")
-    sys.stdout.flush()
-    sys.stderr.flush()
-
-    bot_status["initialization"]["started"] = True
-
-    print("=" * 60, flush=True)
-    print(f"🤖 STARTING FOREX TRADING BOT v{__version__}", flush=True)
-    print(f"   Commit: {__commit__}", flush=True)
-    print("=" * 60, flush=True)
-
-    # DEBUG: Check environment variables in thread context
-    print("🔍 DEBUG: Checking environment variables in bot thread...", flush=True)
-    import os
-
-    oanda_key = os.getenv("OANDA_API_KEY")
-    oanda_account = os.getenv("OANDA_ACCOUNT_ID")
-    oanda_env = os.getenv("OANDA_ENVIRONMENT")
-
-    print(
-        f"   OANDA_API_KEY: {'SET (len={})'.format(len(oanda_key)) if oanda_key else 'NOT SET'}",
-        flush=True,
-    )
-    print(
-        f"   OANDA_ACCOUNT_ID: {oanda_account if oanda_account else 'NOT SET'}",
-        flush=True,
-    )
-    print(f"   OANDA_ENVIRONMENT: {oanda_env if oanda_env else 'NOT SET'}", flush=True)
-    print("=" * 60, flush=True)
-
-    try:
-        bot_type = os.getenv("BOT_TYPE", "mean_reversion").lower()
-        live_key = os.getenv("OANDA_API_KEY_LIVE")
-        live_account = os.getenv("OANDA_ACCOUNT_ID_LIVE")
-
-        if bot_type == "regime":
-            print("📦 Importing USD/JPY Regime Bot...", flush=True)
-            from usdjpy_regime_bot import USDJPYRegimeBot
-
-            print("🏗️  Instantiating USD/JPY Regime Bot...", flush=True)
-            bot = USDJPYRegimeBot(mode=os.getenv("BOT_MODE", "paper"))
-
-            bot_status["initialization"]["oanda_connected"] = True
-            bot_status["initialization"]["model_loaded"] = True
-            bot_status["initialization"]["position_manager_ready"] = True
-            bot_status["initialization"]["decision_reasoning_ready"] = True
-            bot_status["initialization"]["trading_loop_started"] = True
-            bot_status["initialization"]["completed"] = True
-
-            print("✅ Regime bot initialized, starting trading loop...", flush=True)
-
-            try:
-                while True:
-                    # Let the bot itself handle market open/close checks to keep logic unified
-                    bot.run_once()
-                    bot_status["iteration"] += 1
-                    bot_status["last_heartbeat"] = time.time()
-                    if hasattr(bot, 'get_health_data'):
-                        bot_status["bot_data"] = bot.get_health_data()
-                    time.sleep(15 * 60)  # 15 minutes
-            except KeyboardInterrupt:
-                print("\n\n🛑 Stopping Regime Bot...", flush=True)
-            finally:
-                bot_status["running"] = False
-
-        elif live_key and live_account and bot_type == "parallel":
-            # Use Parallel Trading Bot for slippage testing
-            print("📦 Importing Parallel Trading Bot (Demo + Live)...", flush=True)
-            from parallel_trading_bot import ParallelTradingBot
-
-            print("🏗️  Instantiating Parallel Trading Bot...", flush=True)
-            bot = ParallelTradingBot()
-
-            # Mark initialization stages
-            bot_status["initialization"]["oanda_connected"] = True
-            bot_status["initialization"]["model_loaded"] = True
-            bot_status["initialization"]["position_manager_ready"] = True
-            bot_status["initialization"]["decision_reasoning_ready"] = True
-            bot_status["initialization"]["trading_loop_started"] = True
-            bot_status["initialization"]["completed"] = True
-
-            print("✅ Parallel bot initialized, starting trading loop...", flush=True)
-
-            try:
-                # Run with 15 minute intervals
-                while True:
-                    bot.run_once()
-                    bot_status["iteration"] += 1
-                    bot_status["last_heartbeat"] = time.time()
-                    time.sleep(15 * 60)  # 15 minutes for M15 timeframe
-            except KeyboardInterrupt:
-                print("\n\n🛑 Stopping Parallel Trading bot...", flush=True)
-                bot.print_slippage_report()
-            finally:
-                bot_status["running"] = False
-        else:
-            # Fallback to demo-only mode
-            print("📦 Importing USD/JPY Mean Reversion Bot (Demo only)...", flush=True)
-            from usdjpy_mean_reversion import USDJPYMeanReversionBot
-
-            # If live credentials exist but parallel not explicitly set, run live if mode demands,
-            # otherwise just run whatever BOT_MODE specifies (usually paper by default).
-            if live_key and live_account and os.getenv("BOT_MODE", "paper") != "paper":
-                 # Fallback code path to avoid crashing
-                 pass
-
-            print("🏗️  Instantiating USD/JPY Mean Reversion Bot...", flush=True)
-            bot = USDJPYMeanReversionBot(mode=os.getenv("BOT_MODE", "paper"))
-
-            # Mark initialization stages
-            bot_status["initialization"]["oanda_connected"] = True
-            bot_status["initialization"]["model_loaded"] = True
-            bot_status["initialization"]["position_manager_ready"] = True
-            bot_status["initialization"]["decision_reasoning_ready"] = True
-            bot_status["initialization"]["trading_loop_started"] = True
-            bot_status["initialization"]["completed"] = True
-
-            print("✅ Bot initialized, starting trading loop...", flush=True)
-
-            try:
-                # Import market hours check
-                from usdjpy_mean_reversion import is_forex_market_open
-
-                # Run with 15 minute intervals
-                while True:
-                    # Check if forex market is open
-                    market_open, reason = is_forex_market_open()
-                    if not market_open:
-                        print(f"🌙 {reason} - sleeping 30 min", flush=True)
-                        time.sleep(30 * 60)  # Sleep 30 min when market closed
-                        continue
-
-                    bot.run_once()
-                    bot_status["iteration"] += 1
-                    bot_status["last_heartbeat"] = time.time()
-                    time.sleep(15 * 60)  # 15 minutes for M15 timeframe
-            except KeyboardInterrupt:
-                print("\n\n🛑 Stopping USD/JPY Mean Reversion bot...", flush=True)
-            finally:
-                bot_status["running"] = False
-
-    except Exception as e:
-        print(f"❌ Bot error: {e}", flush=True)
-        import traceback
-
-        traceback.print_exc()
-        bot_status["running"] = False
-        bot_status["errors"] += 1
-        bot_status["initialization"]["error"] = str(e)
-        bot_status["initialization"]["completed"] = False
-
-
 if __name__ == "__main__":
     # DEBUG: Check environment variables at startup
     print("=" * 60, flush=True)
@@ -768,11 +664,8 @@ if __name__ == "__main__":
     )
     print("=" * 60, flush=True)
 
-    # Start trading bot in background thread
-    print("🚀 Starting bot thread...", flush=True)
-    bot_thread = threading.Thread(target=run_trading_bot, daemon=True)
-    bot_thread.start()
-    print("✅ Bot thread started", flush=True)
+    # Initialize the bot at startup
+    init_bot()
 
     # Run Flask health check server
     port = int(os.environ.get("PORT", 8080))
