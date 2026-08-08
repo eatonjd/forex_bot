@@ -241,13 +241,19 @@ class RegimeBacktester:
             regime_state = regime_detector.detect(sub_df)
             active_regime = regime_state.regime
             
-            if active_regime == "TRANSITIONAL" or not regime_state.confirmed:
+            if active_regime in ("TRANSITIONAL", "EXTREME_VOLATILITY", "VOLATILITY_SQUEEZE") or not regime_state.confirmed:
                 continue
                 
             signal = "HOLD"
             entry_regime = active_regime
             
-            if active_regime == "MEAN_REVERSION":
+            if active_regime == "TREND_FOLLOWING":
+                sma_dir = regime_state.sma_direction
+                if sma_dir == "BULLISH":
+                    signal = "BUY"
+                elif sma_dir == "BEARISH":
+                    signal = "SELL"
+            elif active_regime == "MEAN_REVERSION":
                 sig_data = self.mr_strategy.get_signal(sub_df, i)
                 signal = sig_data["signal"]
                 
@@ -262,7 +268,7 @@ class RegimeBacktester:
                     if sig_data_range["signal"] != "HOLD":
                         signal = sig_data_range["signal"]
                         entry_regime = "RANGE"
-            else:  # BREAKOUT
+            elif active_regime == "BREAKOUT":
                 sig_data = self.vol_strategy.get_signal(sub_df, i)
                 signal = sig_data["signal"]
                 

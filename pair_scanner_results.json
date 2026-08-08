@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-07-08 15:42:43",
+  "pairs": [
+    {
+      "symbol": "EUR_USD",
+      "score": 9.2,
+      "spread": 0.0,
+      "trend": "unknown"
+    },
+    {
+      "symbol": "GBP_USD",
+      "score": 9.2,
+      "spread": 0.0,
+      "trend": "unknown"
+    },
+    {
+      "symbol": "AUD_USD",
+      "score": 9.2,
+      "spread": 0.0,
+      "trend": "unknown"
+    }
+  ]
+}

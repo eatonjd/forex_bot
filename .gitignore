@@ -24,6 +24,8 @@ wheels/
 venv/
 env/
 ENV/
+forex_env/
+trade_logs/
 
 # IDE
 .idea/

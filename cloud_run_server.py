@@ -90,17 +90,90 @@ def health():
         finally:
             bot_lock.release()
             
-    resp = {
-        "status": "healthy",
-        "bot_running": bot_status["running"],
-        "uptime": time.time() - bot_status["last_check"],
-    }
-    if "bot_data" in bot_status:
-        resp["bot_data"] = bot_status["bot_data"]
-    return jsonify(resp)
+    # Serve JSON only if format=json is explicitly requested
+    if request.args.get("format") == "json":
+        resp = {
+            "status": "healthy",
+            "bot_running": bot_status["running"],
+            "uptime": time.time() - bot_status["last_check"],
+        }
+        if "bot_data" in bot_status:
+            resp["bot_data"] = bot_status["bot_data"]
+        return jsonify(resp)
+
+    # Render Visual Dashboard HTML for browser visits
+    from command_center import generate_command_center_html
+    try:
+        return generate_command_center_html()
+    except Exception as e:
+        print(f"Command center rendering error: {e}", flush=True)
+        resp = {
+            "status": "healthy",
+            "bot_running": bot_status["running"],
+            "uptime": time.time() - bot_status["last_check"],
+            "error": str(e)
+        }
+        return jsonify(resp)
 
 
-@app.route("/health")
+@app.route("/run-optimization", methods=["GET", "POST"])
+def run_optimization():
+    """Trigger automated backtest optimization across candidate pairs universe."""
+    try:
+        from pair_optimizer import optimize_portfolio
+        res = optimize_portfolio()
+        return jsonify({
+            "status": "success",
+            "active_instruments": res.get("active_instruments", []),
+            "timestamp": res.get("timestamp")
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/download-trades")
+def download_trades():
+    """Export recent trade history as a downloadable CSV file."""
+    import csv
+    import io
+    from flask import Response
+    from oandapyV20 import API
+    from oandapyV20.endpoints.trades import TradesList
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Trade ID", "Open Time", "Close Time", "Instrument", "Direction", "Units", "Price", "Close Price", "Realized PnL ($)"])
+
+    api_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
+    account_id = os.getenv("OANDA_ACCOUNT_ID_LIVE") or os.getenv("OANDA_ACCOUNT_ID")
+    env = "live" if os.getenv("OANDA_API_KEY_LIVE") else "practice"
+
+    if api_key and account_id:
+        try:
+            api = API(access_token=api_key, environment=env)
+            r = TradesList(accountID=account_id, params={"state": "CLOSED", "count": 500})
+            api.request(r)
+            trades = r.response.get("trades", [])
+            
+            for t in trades:
+                ot = t.get("openTime", "")[:19]
+                ct = t.get("closeTime", "")[:19]
+                inst = t.get("instrument", "")
+                units = int(float(t.get("initialUnits", 0)))
+                direction = "BUY" if units > 0 else "SELL"
+                price = float(t.get("price", 0))
+                close_price = float(t.get("averageClosePrice", price))
+                pnl = float(t.get("realizedPL", 0))
+                
+                writer.writerow([t.get("id"), ot, ct, inst, direction, abs(units), price, close_price, pnl])
+        except Exception as e:
+            writer.writerow(["Error fetching trades", str(e)])
+
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment;filename=forex_trade_history.csv"}
+    )
 def health_check():
     """Comprehensive health check endpoint"""
     from version import __version__, __commit__
@@ -639,6 +712,23 @@ def command_center():
         import traceback
         traceback.print_exc()
         return f"<h1>Command Center Error</h1><pre>{e}</pre>", 500
+
+
+@app.route("/review-trades", methods=["GET", "POST"])
+def review_trades():
+    """Trigger AI post-trade analysis for newly completed trades."""
+    try:
+        from utils.post_trade_analyzer import PostTradeAnalyzer
+        analyzer = PostTradeAnalyzer()
+        days = int(request.args.get("days", 3))
+        reports = analyzer.analyze_new_trades(days=days)
+        return jsonify({
+            "status": "success",
+            "reviewed_trades_count": len(reports),
+            "reports": reports
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 

@@ -47,10 +47,12 @@ class RegimeDetector:
     """
 
     # Thresholds for regime classification
-    ATR_CALM_THRESHOLD = 1.2     # Below this = calm (mean reversion territory)
+    ATR_EXTREME_THRESHOLD = 2.5   # Above this = panic/shock (circuit breaker)
     ATR_VOLATILE_THRESHOLD = 1.5  # Above this = volatile (breakout territory)
-    ADX_WEAK_THRESHOLD = 20.0    # Below this = no trend
-    ADX_STRONG_THRESHOLD = 25.0  # Above this = strong trend
+    ATR_CALM_THRESHOLD = 1.2      # Below this = calm (mean reversion territory)
+    ATR_SQUEEZE_THRESHOLD = 0.75  # Below this = compressed (volatility squeeze)
+    ADX_WEAK_THRESHOLD = 20.0     # Below this = no trend
+    ADX_STRONG_THRESHOLD = 25.0   # Above this = strong trend
     ADX_OVERPOWERING_THRESHOLD = 35.0 # Option 3 Override
 
     def __init__(
@@ -173,30 +175,33 @@ class RegimeDetector:
 
     def _classify_raw(self, atr_ratio: float, adx: float) -> str:
         """Raw regime classification from indicators (no confirmation)."""
-        # Option 3: Overpowering trend overrides volatility requirement
-        if adx >= self.ADX_OVERPOWERING_THRESHOLD:
+        # 1. Extreme Volatility (Circuit Breaker)
+        if atr_ratio >= self.ATR_EXTREME_THRESHOLD:
+            return "EXTREME_VOLATILITY"
+
+        # 2. Overpowering / High Volatility Breakout
+        if adx >= self.ADX_OVERPOWERING_THRESHOLD or (atr_ratio >= self.ATR_VOLATILE_THRESHOLD and adx >= self.ADX_STRONG_THRESHOLD):
             return "BREAKOUT"
 
-        calm_atr = atr_ratio < self.ATR_CALM_THRESHOLD
-        volatile_atr = atr_ratio >= self.ATR_VOLATILE_THRESHOLD
-        weak_trend = adx < self.ADX_WEAK_THRESHOLD
-        strong_trend = adx >= self.ADX_STRONG_THRESHOLD
+        # 3. Smooth Directional Trend (High ADX with normal/low ATR)
+        if adx >= self.ADX_STRONG_THRESHOLD and atr_ratio < self.ATR_VOLATILE_THRESHOLD:
+            return "TREND_FOLLOWING"
 
-        # Both indicators agree on calm
-        if calm_atr and weak_trend:
+        # 4. Volatility Squeeze (Extreme low ATR compression)
+        if atr_ratio <= self.ATR_SQUEEZE_THRESHOLD and adx < self.ADX_WEAK_THRESHOLD:
+            return "VOLATILITY_SQUEEZE"
+
+        # 5. Standard Mean Reversion (Calm market)
+        if atr_ratio < self.ATR_CALM_THRESHOLD and adx < self.ADX_WEAK_THRESHOLD:
             return "MEAN_REVERSION"
 
-        # Both indicators agree on volatile/trending
-        if volatile_atr and strong_trend:
-            return "BREAKOUT"
-
-        # Strong consensus on one side
-        if calm_atr and not strong_trend:
+        # 6. Consensus fallback for Mean Reversion or Breakout
+        if atr_ratio < self.ATR_CALM_THRESHOLD and adx < self.ADX_STRONG_THRESHOLD:
             return "MEAN_REVERSION"
-        if volatile_atr and not weak_trend:
+        if atr_ratio >= self.ATR_VOLATILE_THRESHOLD and adx >= self.ADX_WEAK_THRESHOLD:
             return "BREAKOUT"
 
-        # Mixed signals
+        # 7. Mixed signals
         return "TRANSITIONAL"
 
     def detect(self, df: pd.DataFrame, idx: int = None) -> RegimeState:
@@ -264,7 +269,9 @@ class RegimeDetector:
 
         # Confidence scoring
         confidence = 50
-        if self._current_regime == "MEAN_REVERSION":
+        if self._current_regime == "EXTREME_VOLATILITY":
+            confidence = 95
+        elif self._current_regime == "MEAN_REVERSION":
             if atr_ratio < 1.0:
                 confidence += 25
             if adx < 15:
@@ -278,6 +285,16 @@ class RegimeDetector:
                 confidence += 25
             elif adx > 25:
                 confidence += 10
+        elif self._current_regime == "TREND_FOLLOWING":
+            if adx > 30:
+                confidence += 30
+            else:
+                confidence += 15
+        elif self._current_regime == "VOLATILITY_SQUEEZE":
+            if atr_ratio < 0.6:
+                confidence += 30
+            else:
+                confidence += 15
         else:  # TRANSITIONAL
             confidence = 30
 

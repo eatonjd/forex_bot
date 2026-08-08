@@ -107,6 +107,27 @@ class USDJPYRegimeBot:
             "margin_rate": 0.02,
             "strategies": ["MEAN_REVERSION", "BREAKOUT"],
         },
+        "EUR_USD": {
+            "pip_size": 0.0001,
+            "pip_value_fn": "direct",
+            "max_spread": 3.0,
+            "margin_rate": 0.02,
+            "strategies": ["MEAN_REVERSION", "BREAKOUT"],
+        },
+        "AUD_USD": {
+            "pip_size": 0.0001,
+            "pip_value_fn": "direct",
+            "max_spread": 3.0,
+            "margin_rate": 0.03,
+            "strategies": ["MEAN_REVERSION", "BREAKOUT"],
+        },
+        "EUR_JPY": {
+            "pip_size": 0.01,
+            "pip_value_fn": "jpy",
+            "max_spread": 4.0,
+            "margin_rate": 0.04,
+            "strategies": ["MEAN_REVERSION", "BREAKOUT"],
+        },
         "XAU_USD": {
             "pip_size": 0.01,
             "pip_value_fn": "direct",
@@ -132,8 +153,18 @@ class USDJPYRegimeBot:
 
         self.api = API(access_token=self.api_key, environment=self.environment)
 
-        # Instruments
-        self.instruments = ["USD_JPY", "GBP_USD", "USD_CAD"]
+        # Instruments — dynamically load optimized roster if available
+        self.instruments = ["USD_JPY", "USD_CAD", "EUR_USD"]
+        try:
+            if os.path.exists("active_instruments.json"):
+                with open("active_instruments.json", "r") as f:
+                    opt_data = json.load(f)
+                    active = opt_data.get("active_instruments", [])
+                    if active:
+                        self.instruments = active
+                        print(f"🎯 Dynamic Portfolio Roster Loaded: {self.instruments}", flush=True)
+        except Exception as e:
+            print(f"⚠️ Error loading active_instruments.json: {e}", flush=True)
 
         # Strategy engines
         self.mr_strategy = MeanReversionStrategy(
@@ -176,7 +207,7 @@ class USDJPYRegimeBot:
         self.mr_take_profit_pips = 20    # Fixed TP target for MR trades
         self.mr_trailing_trigger = 20.0  # Activate trailing at $20
         self.mr_trailing_amount = 10.0   # Trail by $10
-        self.mr_max_holding_hours = 24
+        self.mr_max_holding_hours = 12
 
         # Breakout-specific settings
         self.vol_stop_atr_mult = 1.5
@@ -770,7 +801,30 @@ class USDJPYRegimeBot:
 
         # Get signal from active strategy
         idx = len(df) - 1
-        if active_regime == "MEAN_REVERSION":
+        if active_regime == "EXTREME_VOLATILITY":
+            signal = "HOLD"
+            confidence = 95
+            reason = "Extreme Volatility Circuit Breaker (ATR >= 2.5x)"
+        elif active_regime == "VOLATILITY_SQUEEZE":
+            signal = "HOLD"
+            confidence = 70
+            reason = "Volatility Squeeze Compression Pause (ATR <= 0.75x)"
+        elif active_regime == "TREND_FOLLOWING":
+            # Smooth directional trend: ride SMA direction
+            sma_dir = regime_state.sma_direction
+            if sma_dir == "BULLISH":
+                signal = "BUY"
+                confidence = 75
+                reason = "Trend Following (Bullish SMA alignment)"
+            elif sma_dir == "BEARISH":
+                signal = "SELL"
+                confidence = 75
+                reason = "Trend Following (Bearish SMA alignment)"
+            else:
+                signal = "HOLD"
+                confidence = 50
+                reason = "Trend Following (Neutral SMA)"
+        elif active_regime == "MEAN_REVERSION":
             signal_data = self.mr_strategy.get_signal(df, idx)
             signal = signal_data["signal"]
             confidence = signal_data["confidence"]
@@ -795,11 +849,15 @@ class USDJPYRegimeBot:
                     confidence = signal_data["confidence"]
                     reason = signal_data.get("reason", "")
 
-        else:  # BREAKOUT
+        elif active_regime == "BREAKOUT":
             signal_data = self.vol_strategy.get_signal(df, idx)
             signal = signal_data["signal"]
             confidence = signal_data["confidence"]
             reason = signal_data.get("reason", "")
+        else:  # TRANSITIONAL or unknown
+            signal = "HOLD"
+            confidence = 30
+            reason = f"Regime {active_regime} - no new entries allowed"
 
         self.last_signal_data = {
             "instrument": instrument,

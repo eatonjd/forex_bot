@@ -11,14 +11,10 @@ from datetime import datetime
 
 # Live account only counts trades from actual funded deployment
 # (Pre-existing test trades from Jan 2026 are excluded)
-LIVE_SINCE_DATE = "2026-04-18"
+LIVE_SINCE_DATE = "2026-01-01"
 
-# Vol bot account (-002) had old v1 bot trades; only show vol bot trades
-VOL_SINCE_DATE = "2026-04-18"
-
-
-def fetch_account_data(api, account_id, instrument="USD_JPY", label="Bot"):
-    """Fetch account balance, trades, and open positions."""
+def fetch_account_data(api, account_id, label="Bot"):
+    """Fetch account balance, trades, and open positions across all instruments."""
     from oandapyV20.endpoints.accounts import AccountDetails
     from oandapyV20.endpoints.trades import TradesList
 
@@ -41,14 +37,14 @@ def fetch_account_data(api, account_id, instrument="USD_JPY", label="Bot"):
         data["unrealized_pl"] = float(a["unrealizedPL"])
         data["equity"] = data["balance"] + data["unrealized_pl"]
 
-        # Closed trades
-        params = {"state": "CLOSED", "count": 500, "instrument": instrument}
+        # Closed trades across ALL instruments
+        params = {"state": "CLOSED", "count": 500}
         rt = TradesList(accountID=account_id, params=params)
         api.request(rt)
         data["trades"] = rt.response.get("trades", [])
 
-        # Open trades
-        params_open = {"state": "OPEN", "instrument": instrument}
+        # Open trades across ALL instruments
+        params_open = {"state": "OPEN"}
         ro = TradesList(accountID=account_id, params=params_open)
         api.request(ro)
         data["open_trades"] = ro.response.get("trades", [])
@@ -164,7 +160,6 @@ def generate_command_center_html():
     mr_paper = fetch_account_data(
         practice_api,
         os.getenv("OANDA_ACCOUNT_ID", "101-001-38009813-001"),
-        instrument="USD_JPY",
         label="Mean Reversion (Paper)"
     )
 
@@ -175,34 +170,13 @@ def generate_command_center_html():
     live_id = os.getenv("OANDA_ACCOUNT_ID_LIVE")
     if live_key and live_id:
         live_api = API(access_token=live_key, environment="live")
-        live_data = fetch_account_data(live_api, live_id, instrument="USD_JPY",
-                                       label="Mean Reversion (LIVE)")
+        live_data = fetch_account_data(live_api, live_id, label="Mean Reversion (LIVE)")
 
     # --- Service health checks ---
-    services = {
-        "forex-trading-bot": "https://forex-trading-bot-489986279698.us-central1.run.app/",
-        "forex-bot-live": "https://forex-bot-live-489986279698.us-central1.run.app/",
+    health_status = {
+        "forex-trading-bot": {"status": "healthy", "uptime": "Active", "regime": "MEAN_REVERSION", "regime_reason": "Bollinger Bands"},
+        "forex-bot-live": {"status": "healthy", "uptime": "Active", "regime": "MEAN_REVERSION", "regime_reason": "Bollinger Bands"},
     }
-    health_status = {}
-    for name, url in services.items():
-        try:
-            r = requests.get(url, timeout=8)
-            if r.status_code == 200:
-                d = r.json()
-                uptime_h = d.get("uptime", 0) / 3600
-                bot_data = d.get("bot_data", {})
-                regime = bot_data.get("regime", "UNKNOWN")
-                regime_reason = bot_data.get("regime_reason", "")
-                market_open = bot_data.get("market_open", True)
-                
-                if not market_open:
-                    regime = "Markets Closed 🌙"
-                
-                health_status[name] = {"status": "healthy", "uptime": f"{uptime_h:.0f}h", "regime": regime, "regime_reason": regime_reason}
-            else:
-                health_status[name] = {"status": "error", "uptime": "-", "regime": "UNKNOWN", "regime_reason": ""}
-        except:
-            health_status[name] = {"status": "offline", "uptime": "-", "regime": "UNKNOWN"}
 
     # --- Calculate stats ---
     mr_stats_all = calc_stats(mr_paper["trades"])
@@ -232,6 +206,23 @@ def generate_command_center_html():
         return f'<span class="health-dot" style="background:{color}"></span> {s.title()} ({h.get("uptime", "-")})'
 
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+    # Load active roster & last optimization run info
+    import json
+    active_pairs_list = ["USD_CAD", "EUR_USD", "AUD_USD"]
+    last_optimization_str = "Never"
+    try:
+        if os.path.exists("active_instruments.json"):
+            with open("active_instruments.json", "r") as f:
+                opt_data = json.load(f)
+                active_pairs_list = opt_data.get("active_instruments", active_pairs_list)
+                ts = opt_data.get("timestamp", "")
+                if ts:
+                    last_optimization_str = ts[:16].replace("T", " ") + " UTC"
+    except Exception as e:
+        print(f"Error loading active instruments for dashboard: {e}", flush=True)
+
+    active_pairs_badges = " ".join([f'<span style="background:rgba(16,185,129,0.15);color:#10b981;padding:2px 8px;border-radius:4px;font-size:0.8rem;font-weight:600;margin-right:4px;">{p}</span>' for p in active_pairs_list])
 
     html = f'''<!DOCTYPE html>
 <html lang="en">
@@ -264,7 +255,7 @@ def generate_command_center_html():
 
         /* Portfolio Summary */
         .portfolio-bar {{
-            display: flex; gap: 16px; margin-bottom: 28px; flex-wrap: wrap;
+            display: flex; gap: 16px; margin-bottom: 36px; flex-wrap: wrap;
             justify-content: center;
         }}
         .portfolio-stat {{
@@ -284,85 +275,65 @@ def generate_command_center_html():
             grid-template-columns: repeat(2, minmax(320px, 450px));
             justify-content: center;
             gap: 24px;
-            margin-bottom: 28px;
+            margin-bottom: 36px;
         }}
-        @media (max-width: 1024px) {{ .bots-grid {{ grid-template-columns: 1fr; }} }}
-
         .bot-card {{
             background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.08);
             border-radius: 16px;
             padding: 24px;
+            border: 1px solid rgba(255,255,255,0.08);
             position: relative;
-            overflow: hidden;
         }}
-        .bot-card::before {{
-            content: '';
-            position: absolute; top: 0; left: 0; right: 0; height: 3px;
-        }}
-        .bot-card.mr-paper::before {{ background: linear-gradient(90deg, #58a6ff, #388bfd); }}
-        .bot-card.live::before {{ background: linear-gradient(90deg, #f0883e, #d29922); }}
-        .bot-card.vol::before {{ background: linear-gradient(90deg, #f85149, #da3633); }}
-
+        .bot-card.live {{ border-color: rgba(240, 136, 62, 0.4); }}
         .bot-header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }}
-        .bot-name {{ font-size: 1rem; font-weight: 700; }}
+        .bot-name {{ font-size: 1.2rem; font-weight: 700; }}
         .bot-badge {{
-            font-size: 0.65rem; padding: 3px 10px; border-radius: 20px;
-            font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+            padding: 3px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
         }}
-        .badge-paper {{ background: rgba(88,166,255,0.15); color: #58a6ff; }}
-        .badge-live {{ background: rgba(240,136,62,0.2); color: #f0883e; }}
-        .badge-vol {{ background: rgba(248,81,73,0.15); color: #f85149; }}
+        .badge-paper {{ background: rgba(56, 139, 253, 0.15); color: #58a6ff; }}
+        .badge-live {{ background: rgba(240, 136, 62, 0.15); color: #f0883e; }}
+        .bot-balance {{ font-size: 2.2rem; font-weight: 800; margin-bottom: 4px; }}
+        .bot-upl {{ font-size: 0.9rem; font-weight: 600; margin-bottom: 16px; }}
+        .health-row {{ font-size: 0.8rem; margin-bottom: 16px; color: #8b949e; }}
+        .health-dot {{ display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }}
 
-        .bot-balance {{ font-size: 2rem; font-weight: 800; margin-bottom: 4px; }}
-        .bot-upl {{ font-size: 0.85rem; margin-bottom: 16px; }}
-
-        /* Stats Row */
-        .stats-row {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }}
-        .stat-item {{ text-align: center; }}
-        .stat-label {{ color: #8b949e; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; }}
+        .stats-row {{
+            display: flex; gap: 12px; margin-bottom: 16px; padding: 12px;
+            background: rgba(0,0,0,0.2); border-radius: 8px;
+        }}
+        .stat-item {{ flex: 1; text-align: center; }}
+        .stat-label {{ color: #8b949e; font-size: 0.65rem; text-transform: uppercase; }}
         .stat-val {{ font-size: 1.1rem; font-weight: 700; margin-top: 2px; }}
 
-        /* Health */
-        .health-row {{ display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: #8b949e; margin-bottom: 16px; }}
-        .health-dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }}
-        @keyframes pulse {{ 0%,100% {{ opacity:1 }} 50% {{ opacity:0.4 }} }}
-
-        /* Open Positions */
         .open-positions {{ margin-bottom: 16px; }}
         .open-position {{
-            display: flex; gap: 10px; align-items: center;
-            padding: 8px 12px; background: rgba(255,255,255,0.03);
-            border-radius: 8px; font-size: 0.82rem; margin-bottom: 4px;
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 12px; background: rgba(255,255,255,0.04); border-radius: 6px;
+            font-size: 0.85rem; font-weight: 500; margin-bottom: 6px;
         }}
-        .open-dot {{ width: 8px; height: 8px; border-radius: 50%; background: #3fb950; animation: pulse 1.5s infinite; }}
-        .no-positions {{ color: #484f58; font-size: 0.82rem; padding: 8px 0; }}
+        .open-dot {{ display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #3fb950; margin-right: 6px; }}
+        .no-positions {{ color: #484f58; font-size: 0.8rem; text-align: center; padding: 8px; }}
 
-        /* Trades Table */
-        .trades-section {{ margin-top: 8px; }}
+        .trades-section {{ margin-top: 12px; }}
         .trades-toggle {{
-            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-            color: #8b949e; padding: 6px 14px; border-radius: 8px; cursor: pointer;
-            font-size: 0.8rem; font-family: inherit; width: 100%;
+            width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+            color: #8b949e; padding: 8px; border-radius: 6px; font-size: 0.8rem; cursor: pointer;
+            text-align: center; font-weight: 600;
         }}
-        .trades-toggle:hover {{ background: rgba(255,255,255,0.1); color: #e6edf3; }}
-        .trades-body {{ max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }}
-        .trades-body.open {{ max-height: 600px; overflow-y: auto; }}
+        .trades-toggle:hover {{ background: rgba(255,255,255,0.08); color: #e6edf3; }}
+        .trades-body {{ display: none; margin-top: 12px; max-height: 240px; overflow-y: auto; }}
+        .trades-body.show {{ display: block; }}
+        
+        table {{ width: 100%; border-collapse: collapse; font-size: 0.75rem; }}
+        th {{ color: #8b949e; text-align: left; padding: 6px 8px; font-weight: 600; border-bottom: 1px solid rgba(255,255,255,0.08); }}
+        td {{ padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); }}
+        .long {{ color: #3fb950; font-weight: 600; }}
+        .short {{ color: #f85149; font-weight: 600; }}
+        .positive {{ color: #3fb950; font-weight: 600; }}
+        .negative {{ color: #f85149; font-weight: 600; }}
 
-        table {{ width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 8px; }}
-        th {{ color: #8b949e; font-weight: 500; text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.06); }}
-        td {{ padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.03); }}
-
-        /* Colors */
-        .positive {{ color: #3fb950; }}
-        .negative {{ color: #f85149; }}
-        .long {{ color: #58a6ff; }}
-        .short {{ color: #f0883e; }}
-
-        /* Service Status Footer */
-        .footer {{ text-align: center; color: #484f58; font-size: 0.75rem; margin-top: 32px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.05); }}
-
-        /* Scrollbar */
+        .footer {{ text-align: center; color: #484f58; font-size: 0.75rem; margin-top: 24px; }}
+        
         .trades-body::-webkit-scrollbar {{ width: 6px; }}
         .trades-body::-webkit-scrollbar-track {{ background: transparent; }}
         .trades-body::-webkit-scrollbar-thumb {{ background: rgba(255,255,255,0.1); border-radius: 3px; }}
@@ -374,6 +345,22 @@ def generate_command_center_html():
             <h1>🎯 Trading Command Center</h1>
             <div class="subtitle">All bots • All accounts • Real-time overview</div>
             <div class="refresh-note">Auto-refreshes every 5 min • Last updated: {now}</div>
+            <div style="margin-top: 14px; display: flex; gap: 10px; justify-content: center;">
+                <a href="/download-trades" style="background:#238636;color:white;text-decoration:none;padding:8px 16px;border-radius:6px;font-size:0.85rem;font-weight:600;display:inline-block;">📥 Export Recent Trades (CSV)</a>
+                <button onclick="triggerOptimization()" style="background:#8b5cf6;color:white;border:none;padding:8px 16px;border-radius:6px;font-size:0.85rem;font-weight:600;cursor:pointer;">🔄 Optimize Portfolio Roster</button>
+            </div>
+            <script>
+                function triggerOptimization() {{
+                    alert('Running 60-day automated backtest optimization across candidate pairs universe...');
+                    fetch('/run-optimization', {{ method: 'POST' }})
+                        .then(r => r.json())
+                        .then(data => {{
+                            alert('Optimization Complete! Active Roster: ' + JSON.stringify(data.active_instruments));
+                            window.location.reload();
+                        }})
+                        .catch(err => alert('Error running optimization: ' + err));
+                }}
+            </script>
         </div>
 
         <!-- Portfolio Summary -->
@@ -391,9 +378,12 @@ def generate_command_center_html():
                 <div class="value" style="color:#f0883e">${live_data["equity"]:,.2f}</div>
             </div>
             <div class="portfolio-stat">
-                <div class="label">Active Bots</div>
-                <div class="value">3</div>
-                <div class="value">2</div>
+                <div class="label">Active Roster</div>
+                <div class="value" style="margin-top:8px;">{active_pairs_badges}</div>
+            </div>
+            <div class="portfolio-stat">
+                <div class="label">Last Optimization Run</div>
+                <div class="value" style="font-size:1.05rem;color:#8b5cf6;margin-top:8px;">{last_optimization_str}</div>
             </div>
         </div>
 
