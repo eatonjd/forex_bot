@@ -144,6 +144,102 @@ def build_open_positions(open_trades):
         </div>'''
     return rows
 
+def build_ai_reviews_section():
+    """Build HTML section for Post-Trade AI Reviews and AI Reward Incentives."""
+    import json
+    reviews = []
+    rewards = []
+    
+    # Try loading from local file
+    try:
+        if os.path.exists("trade_logs/trade_reviews.json"):
+            with open("trade_logs/trade_reviews.json", "r") as f:
+                reviews = json.load(f)
+        if os.path.exists("trade_logs/reward_history.json"):
+            with open("trade_logs/reward_history.json", "r") as f:
+                rewards = json.load(f)
+    except Exception as e:
+        print(f"Error loading AI reviews for command center: {e}", flush=True)
+
+    avg_reward = 0.0
+    sortino_ratio = 0.0
+    if rewards:
+        scores = [r.get("reward_score", 0.0) for r in rewards]
+        avg_reward = sum(scores) / len(scores) if scores else 0.0
+        
+        downside = [min(0.0, s)**2 for s in scores]
+        d_std = (sum(downside) / len(scores))**0.5 if scores else 0.0
+        sortino_ratio = avg_reward / (d_std + 1e-6) if d_std > 0 else avg_reward
+
+    avg_class = "positive" if avg_reward >= 0 else "negative"
+    sortino_class = "positive" if sortino_ratio >= 1.0 else "negative"
+
+    reviews_list_html = ""
+    if reviews:
+        # Display newest 10 reviews
+        recent = list(reversed(reviews))[:10]
+        for r in recent:
+            symbol = r.get("symbol", "N/A")
+            direction = r.get("direction", "N/A")
+            pnl = float(r.get("pnl", 0.0))
+            pnl_class = "positive" if pnl >= 0 else "negative"
+            reward_score = float(r.get("reward_score", 0.0))
+            reward_class = "positive" if reward_score >= 0 else "negative"
+            duration = r.get("duration_hrs", 0.0)
+            report_text = r.get("report", "").replace("\n", "<br>")
+            trade_key = str(r.get("trade_key", "review")).replace(":", "_").replace("-", "_").replace(".", "_")
+
+            reviews_list_html += f'''
+            <div class="review-card">
+                <div class="review-header">
+                    <div>
+                        <span class="symbol-badge">{symbol}</span>
+                        <span class="dir-badge {direction.lower()}">{direction}</span>
+                        <span class="{pnl_class}" style="font-weight:700;margin-left:8px;">${pnl:+.2f}</span>
+                        <span class="hold-time">⏱️ {duration:.1f}h</span>
+                    </div>
+                    <div class="reward-pill {reward_class}">⭐ AI Reward: {reward_score:+.2f}</div>
+                </div>
+                <button class="trades-toggle" onclick="toggleReview('{trade_key}')">▼ View Gemini AI Deep Dive Analysis</button>
+                <div id="{trade_key}" class="trades-body review-content">
+                    <div class="report-box">{report_text}</div>
+                </div>
+            </div>'''
+    else:
+        reviews_list_html = '''
+        <div class="no-positions" style="text-align:center;padding:24px;">
+            🤖 AI Post-Trade Reviewer Active • Daily reviews run automatically at 4:00 PM EST via Cloud Scheduler
+        </div>'''
+
+    html = f'''
+    <div class="card-full" style="margin-top: 36px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 24px;">
+        <div class="section-title" style="margin-bottom: 20px; text-align: center;">
+            <h2 style="font-size: 1.5rem; font-weight: 700; background: linear-gradient(135deg, #a855f7, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">🧠 Post-Trade AI Reviews & Reward Incentives</h2>
+            <div style="color: #8b949e; font-size: 0.8rem; margin-top: 4px;">Daily Automated Gemini Quantitative Analytics</div>
+        </div>
+        
+        <div class="portfolio-bar" style="margin-bottom: 24px;">
+            <div class="portfolio-stat">
+                <div class="label">Avg AI Reward ($R_t$)</div>
+                <div class="value {avg_class}">{avg_reward:+.2f}</div>
+            </div>
+            <div class="portfolio-stat">
+                <div class="label">Rolling Sortino Ratio</div>
+                <div class="value {sortino_class}">{sortino_ratio:.2f}</div>
+            </div>
+            <div class="portfolio-stat">
+                <div class="label">AI Reviews Logged</div>
+                <div class="value">{len(reviews) if reviews else len(rewards)}</div>
+            </div>
+        </div>
+
+        <div class="reviews-container">
+            {reviews_list_html}
+        </div>
+    </div>
+    '''
+    return html
+
 
 def generate_command_center_html():
     """Generate the full combined dashboard HTML."""
@@ -197,6 +293,7 @@ def generate_command_center_html():
     # Open positions
     mr_open_html = build_open_positions(mr_paper["open_trades"])
     live_open_html = build_open_positions(live_data["open_trades"])
+    ai_reviews_html = build_ai_reviews_section()
 
     # Health dots
     def health_dot(name):
@@ -323,6 +420,7 @@ def generate_command_center_html():
         .trades-toggle:hover {{ background: rgba(255,255,255,0.08); color: #e6edf3; }}
         .trades-body {{ display: none; margin-top: 12px; max-height: 240px; overflow-y: auto; }}
         .trades-body.show {{ display: block; }}
+        .trades-body.open {{ display: block; }}
         
         table {{ width: 100%; border-collapse: collapse; font-size: 0.75rem; }}
         th {{ color: #8b949e; text-align: left; padding: 6px 8px; font-weight: 600; border-bottom: 1px solid rgba(255,255,255,0.08); }}
@@ -331,6 +429,22 @@ def generate_command_center_html():
         .short {{ color: #f85149; font-weight: 600; }}
         .positive {{ color: #3fb950; font-weight: 600; }}
         .negative {{ color: #f85149; font-weight: 600; }}
+
+        /* Review Section Styling */
+        .review-card {{
+            background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px; padding: 16px; margin-bottom: 12px;
+        }}
+        .review-header {{ display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem; }}
+        .symbol-badge {{ background: rgba(88,166,255,0.15); color: #58a6ff; font-weight: 700; padding: 3px 8px; border-radius: 6px; margin-right: 6px; }}
+        .dir-badge {{ font-size: 0.75rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }}
+        .dir-badge.long {{ background: rgba(63,185,80,0.15); color: #3fb950; }}
+        .dir-badge.short {{ background: rgba(248,81,73,0.15); color: #f85149; }}
+        .reward-pill {{ font-size: 0.8rem; font-weight: 700; padding: 4px 10px; border-radius: 20px; }}
+        .reward-pill.positive {{ background: rgba(63,185,80,0.2); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }}
+        .reward-pill.negative {{ background: rgba(248,81,73,0.2); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }}
+        .hold-time {{ color: #8b949e; font-size: 0.8rem; margin-left: 10px; }}
+        .report-box {{ background: rgba(13,17,23,0.8); border: 1px solid rgba(255,255,255,0.05); padding: 14px; border-radius: 8px; font-size: 0.82rem; line-height: 1.5; color: #c9d1d9; margin-top: 10px; }}
 
         .footer {{ text-align: center; color: #484f58; font-size: 0.75rem; margin-top: 24px; }}
         
@@ -464,6 +578,8 @@ def generate_command_center_html():
 
         </div>
 
+        {ai_reviews_html}
+
         <div class="footer">
             <p>Strategy: Mean Reversion (BB+RSI) • Volatility Breakout (Donchian+ATR+ADX) • Timeframe: M15</p>
             <p style="margin-top:4px">Updated: {now}</p>
@@ -473,6 +589,10 @@ def generate_command_center_html():
     <script>
     function toggleTrades(id) {{
         const el = document.getElementById(id + '-trades');
+        el.classList.toggle('open');
+    }}
+    function toggleReview(id) {{
+        const el = document.getElementById(id);
         el.classList.toggle('open');
     }}
     </script>

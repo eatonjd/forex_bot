@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import google.generativeai as genai
 from utils.trade_logger import TradeLogger
 from utils.notifications import TradingNotifier
+from utils.reward_engine import ForexRewardEngine
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -30,6 +31,7 @@ class PostTradeAnalyzer:
     def __init__(self):
         self.logger = TradeLogger()
         self.notifier = TradingNotifier()
+        self.reward_engine = ForexRewardEngine(log_dir=self.logger.log_dir)
         self.reviews_file = self.logger.log_dir / "reviewed_trade_keys.json"
         self._load_reviewed_keys()
 
@@ -134,7 +136,18 @@ class PostTradeAnalyzer:
             # Run Gemini analysis
             report = self._generate_gemini_report(open_t, close_t)
             if report:
-                new_reviews.append(report)
+                review_obj = {
+                    "trade_key": trade_key,
+                    "symbol": close_t.get("symbol"),
+                    "direction": open_t.get("direction"),
+                    "pnl": close_t.get("pnl", 0.0),
+                    "duration_hrs": round(duration_hrs, 2) if 'duration_hrs' in locals() else 0.0,
+                    "reward_score": reward_metrics["reward_score"] if 'reward_metrics' in locals() else 0.0,
+                    "efficiency_score": reward_metrics["efficiency_score"] if 'reward_metrics' in locals() else 0.0,
+                    "report": report,
+                    "timestamp": close_t.get("timestamp")
+                }
+                new_reviews.append(review_obj)
                 self.reviewed_keys.append(trade_key)
                 
                 # Send notification immediately
@@ -143,9 +156,35 @@ class PostTradeAnalyzer:
                 except Exception as e:
                     print(f"⚠️ Failed to send trade review notification: {e}")
 
-        # Save reviewed keys list
+        # Save reviewed keys & reports list
         if new_reviews:
             self._save_reviewed_keys()
+            self._save_trade_reviews(new_reviews)
+
+        return new_reviews
+
+    def _save_trade_reviews(self, new_reviews: list):
+        """Save detailed trade reviews list to JSON and GCS."""
+        reviews_path = self.logger.log_dir / "trade_reviews.json"
+        existing = []
+        if reviews_path.exists():
+            try:
+                with open(reviews_path, "r") as f:
+                    existing = json.load(f)
+            except Exception:
+                pass
+        
+        all_reviews = existing + new_reviews
+        content = json.dumps(all_reviews, indent=2)
+        with open(reviews_path, "w") as f:
+            f.write(content)
+
+        if self.logger.use_gcs and self.logger.gcs_bucket:
+            try:
+                blob = self.logger.gcs_bucket.blob("trade_logs/trade_reviews.json")
+                blob.upload_from_string(content, content_type="application/json")
+            except Exception as e:
+                print(f"⚠️ GCS save trade reviews error: {e}")
 
         return new_reviews
 
@@ -156,6 +195,8 @@ class PostTradeAnalyzer:
         direction = close_t.get("direction")
         entry_price = open_t.get("price")
         exit_price = close_t.get("price")
+        units = open_t.get("units", 10000)
+        atr = open_t.get("atr")
         
         # Calculate duration
         try:
@@ -165,10 +206,23 @@ class PostTradeAnalyzer:
         except Exception:
             duration_hrs = 0.0
 
+        # Calculate Quantitative AI Reward Score
+        reward_metrics = self.reward_engine.calculate_trade_reward(
+            pnl=pnl,
+            duration_hrs=duration_hrs,
+            atr=atr,
+            units=units,
+            regime=open_t.get("signal_reason", "MEAN_REVERSION")
+        )
+        sortino = self.reward_engine.calculate_rolling_sortino()
+
         trade_context = {
             "Symbol": symbol,
             "Direction": direction,
             "PnL": f"${pnl:+.2f}",
+            "AI Reward Score": f"{reward_metrics['reward_score']:+.2f}",
+            "Efficiency Score": f"{reward_metrics['efficiency_score']:+.2f}",
+            "Rolling Portfolio Sortino": f"{sortino:.2f}",
             "Entry Price": entry_price,
             "Exit Price": exit_price,
             "Duration (Hours)": f"{duration_hrs:.2f}h",

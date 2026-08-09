@@ -97,12 +97,18 @@ def run_backtest_on_pair(df):
     drawdown = peak - cum_pnl
     max_dd = np.max(drawdown) if len(drawdown) > 0 else 0.0
 
+    # Calculate Reward Score
+    downside_trades = [min(0.0, t)**2 for t in trades]
+    downside_dev = np.sqrt(np.mean(downside_trades)) if trades else 0.0
+    reward_score = (sum(trades) / (downside_dev + 1e-6)) if downside_dev > 0 else sum(trades)
+
     return {
         "win_rate": win_rate,
         "profit_factor": profit_factor,
         "max_drawdown": max_dd,
         "trades": len(trades),
-        "pnl": sum(trades)
+        "pnl": sum(trades),
+        "reward_score": float(reward_score)
     }
 
 def optimize_portfolio():
@@ -116,7 +122,7 @@ def optimize_portfolio():
 
     api = API(access_token=api_key, environment=env)
     results = {}
-    active_roster = []
+    qualified_pairs = []
 
     print("🔍 Optimizing Forex Roster across Candidate Universe...", flush=True)
     for pair in CANDIDATE_UNIVERSE:
@@ -128,12 +134,16 @@ def optimize_portfolio():
             # Check Gates
             if (res["win_rate"] >= WIN_RATE_THRESHOLD and 
                 res["profit_factor"] >= PROFIT_FACTOR_THRESHOLD):
-                active_roster.append(pair)
-                print(f"  ✅ [QUALIFIED] {pair}: WR={res['win_rate']:.1f}%, PF={res['profit_factor']:.2f}")
+                qualified_pairs.append((pair, res["reward_score"]))
+                print(f"  ✅ [QUALIFIED] {pair}: WR={res['win_rate']:.1f}%, PF={res['profit_factor']:.2f}, Reward={res['reward_score']:.2f}")
             else:
-                print(f"  ❌ [REJECTED]  {pair}: WR={res['win_rate']:.1f}%, PF={res['profit_factor']:.2f}")
+                print(f"  ❌ [REJECTED]  {pair}: WR={res['win_rate']:.1f}%, PF={res['profit_factor']:.2f}, Reward={res['reward_score']:.2f}")
         except Exception as e:
             print(f"  ❌ Error optimizing {pair}: {e}")
+
+    # Rank qualified pairs by highest Reward Score
+    qualified_pairs.sort(key=lambda x: x[1], reverse=True)
+    active_roster = [p[0] for p in qualified_pairs]
 
     # Fallback safety if market filter rejects all
     if not active_roster:
