@@ -362,9 +362,14 @@ def _generate_live_trades_html(live_trades):
 @app.route("/dashboard")
 def dashboard():
     """Redirect to journey page (now the combined dashboard)"""
-    from flask import redirect
-
-    return redirect("/journey")
+    """Render Trading Command Center HTML"""
+    from command_center import generate_command_center_html
+    try:
+        return generate_command_center_html()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"<h1>Command Center Error</h1><pre>{e}</pre>", 500
 
 
 @app.route("/dashboard_old")
