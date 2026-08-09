@@ -361,7 +361,6 @@ def _generate_live_trades_html(live_trades):
 
 @app.route("/dashboard")
 def dashboard():
-    """Redirect to journey page (now the combined dashboard)"""
     """Render Trading Command Center HTML"""
     from command_center import generate_command_center_html
     try:
