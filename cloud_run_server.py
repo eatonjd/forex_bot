@@ -144,9 +144,9 @@ def download_trades():
     writer = csv.writer(output)
     writer.writerow(["Trade ID", "Open Time", "Close Time", "Instrument", "Direction", "Units", "Price", "Close Price", "Realized PnL ($)"])
 
-    api_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
-    account_id = os.getenv("OANDA_ACCOUNT_ID_LIVE") or os.getenv("OANDA_ACCOUNT_ID")
-    env = "live" if os.getenv("OANDA_API_KEY_LIVE") else "practice"
+    api_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY") or os.getenv("OANDA_API_KEY_DEMO")
+    account_id = os.getenv("OANDA_ACCOUNT_ID_LIVE") or os.getenv("OANDA_ACCOUNT_ID") or os.getenv("OANDA_ACCOUNT_ID_DEMO")
+    env = "live" if os.getenv("OANDA_API_KEY_LIVE") and (os.getenv("OANDA_API_KEY_LIVE").startswith("3") or "live" in os.getenv("OANDA_ENVIRONMENT", "live")) else "practice"
 
     if api_key and account_id:
         try:
@@ -385,30 +385,34 @@ def dashboard_old():
 
     try:
         # Demo account
-        demo_api = API(access_token=os.getenv("OANDA_API_KEY"), environment="practice")
-        demo_r = AccountSummary(accountID=os.getenv("OANDA_ACCOUNT_ID"))
-        demo_api.request(demo_r)
-        demo_acc = demo_r.response["account"]
-        demo_data["balance"] = float(demo_acc["balance"])
-        demo_data["nav"] = float(demo_acc["NAV"])
-        demo_data["unrealized_pl"] = float(demo_acc["unrealizedPL"])
+        demo_key = os.getenv("OANDA_API_KEY") or os.getenv("OANDA_API_KEY_DEMO")
+        demo_id = os.getenv("OANDA_ACCOUNT_ID") or os.getenv("OANDA_ACCOUNT_ID_DEMO", "101-001-38009813-001")
+        if demo_key and demo_id:
+            demo_api = API(access_token=demo_key, environment="practice")
+            demo_r = AccountSummary(accountID=demo_id)
+            demo_api.request(demo_r)
+            demo_acc = demo_r.response["account"]
+            demo_data["balance"] = float(demo_acc["balance"])
+            demo_data["nav"] = float(demo_acc["NAV"])
+            demo_data["unrealized_pl"] = float(demo_acc["unrealizedPL"])
 
-        # Demo trades
-        trades_r = TradesList(
-            accountID=os.getenv("OANDA_ACCOUNT_ID"),
-            params={"instrument": "USD_JPY", "state": "ALL", "count": 500},
-        )
-        demo_api.request(trades_r)
-        demo_data["trades"] = trades_r.response.get("trades", [])
+            # Demo trades
+            trades_r = TradesList(
+                accountID=demo_id,
+                params={"instrument": "USD_JPY", "state": "ALL", "count": 500},
+            )
+            demo_api.request(trades_r)
+            demo_data["trades"] = trades_r.response.get("trades", [])
     except Exception as e:
         demo_data["error"] = str(e)
 
     try:
         # Live account
-        live_key = os.getenv("OANDA_API_KEY_LIVE")
-        live_id = os.getenv("OANDA_ACCOUNT_ID_LIVE")
+        live_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
+        live_id = os.getenv("OANDA_ACCOUNT_ID_LIVE", "001-001-20048243-002")
         if live_key and live_id:
-            live_api = API(access_token=live_key, environment="live")
+            live_env = "live" if live_key.startswith("3") or "live" in os.getenv("OANDA_ENVIRONMENT", "live") else "practice"
+            live_api = API(access_token=live_key, environment=live_env)
             live_r = AccountSummary(accountID=live_id)
             live_api.request(live_r)
             live_acc = live_r.response["account"]
@@ -689,15 +693,18 @@ def journey():
     # Fetch trade history from OANDA
     trades = []
     try:
-        api = API(access_token=os.getenv("OANDA_API_KEY"), environment="practice")
-        r = TradesList(
-            accountID=os.getenv("OANDA_ACCOUNT_ID"),
-            params={"instrument": "USD_JPY", "state": "ALL", "count": 500},
-        )
-        api.request(r)
-        trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
+        demo_key = os.getenv("OANDA_API_KEY") or os.getenv("OANDA_API_KEY_DEMO")
+        demo_id = os.getenv("OANDA_ACCOUNT_ID") or os.getenv("OANDA_ACCOUNT_ID_DEMO", "101-001-38009813-001")
+        if demo_key and demo_id:
+            api = API(access_token=demo_key, environment="practice")
+            r = TradesList(
+                accountID=demo_id,
+                params={"instrument": "USD_JPY", "state": "ALL", "count": 500},
+            )
+            api.request(r)
+            trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
     except Exception as e:
-        print(f"Journey error: {e}")
+        print(f"Journey error: {e}", flush=True)
 
     # Generate enhanced HTML from journey_page module
     html = generate_journey_html(trades, start_balance=5000)

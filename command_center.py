@@ -51,6 +51,7 @@ def fetch_account_data(api, account_id, label="Bot"):
 
     except Exception as e:
         data["error"] = str(e)
+        print(f"⚠️ Error fetching account data for {label} ({account_id}): {e}", flush=True)
 
     return data
 
@@ -246,26 +247,32 @@ def generate_command_center_html():
     from oandapyV20 import API
     import requests
 
-    # --- Fetch data from all three accounts ---
-    practice_api = API(
-        access_token=os.getenv("OANDA_API_KEY"),
-        environment="practice"
-    )
+    # --- Fetch data from accounts ---
+    demo_key = os.getenv("OANDA_API_KEY") or os.getenv("OANDA_API_KEY_DEMO")
+    demo_id = os.getenv("OANDA_ACCOUNT_ID") or os.getenv("OANDA_ACCOUNT_ID_DEMO") or "101-001-38009813-001"
+    
+    mr_paper = {"label": "Mean Reversion (Paper)", "balance": 0, "unrealized_pl": 0,
+                "equity": 0, "trades": [], "open_trades": [], "error": None}
+    if demo_key:
+        practice_api = API(
+            access_token=demo_key,
+            environment="practice"
+        )
+        # 1. Mean Reversion Paper (-001)
+        mr_paper = fetch_account_data(
+            practice_api,
+            demo_id,
+            label="Mean Reversion (Paper)"
+        )
 
-    # 1. Mean Reversion Paper (-001)
-    mr_paper = fetch_account_data(
-        practice_api,
-        os.getenv("OANDA_ACCOUNT_ID", "101-001-38009813-001"),
-        label="Mean Reversion (Paper)"
-    )
-
-    # 3. Mean Reversion Live
+    # 2. Mean Reversion Live
     live_data = {"label": "Mean Reversion (LIVE)", "balance": 0, "unrealized_pl": 0,
                  "equity": 0, "trades": [], "open_trades": [], "error": None}
-    live_key = os.getenv("OANDA_API_KEY_LIVE")
-    live_id = os.getenv("OANDA_ACCOUNT_ID_LIVE")
+    live_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
+    live_id = os.getenv("OANDA_ACCOUNT_ID_LIVE", "001-001-20048243-002")
     if live_key and live_id:
-        live_api = API(access_token=live_key, environment="live")
+        live_env = "live" if live_key.startswith("3") or "live" in os.getenv("OANDA_ENVIRONMENT", "live") else "practice"
+        live_api = API(access_token=live_key, environment=live_env)
         live_data = fetch_account_data(live_api, live_id, label="Mean Reversion (LIVE)")
 
     # --- Service health checks ---

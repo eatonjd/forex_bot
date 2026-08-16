@@ -142,14 +142,14 @@ class USDJPYRegimeBot:
         self.mode = mode
         self.granularity = "M15"
 
-        # Account setup — use -002 practice account for regime bot
+        # Account setup
         if mode == "paper":
-            self.api_key = os.getenv("OANDA_API_KEY")
-            self.account_id = os.getenv("OANDA_ACCOUNT_ID", "101-001-38009813-001")
+            self.api_key = os.getenv("OANDA_API_KEY") or os.getenv("OANDA_API_KEY_DEMO")
+            self.account_id = os.getenv("OANDA_ACCOUNT_ID") or os.getenv("OANDA_ACCOUNT_ID_DEMO", "101-001-38009813-001")
             self.environment = "practice"
         else:
-            self.api_key = os.getenv("OANDA_API_KEY_LIVE")
-            self.account_id = os.getenv("OANDA_ACCOUNT_ID_LIVE")
+            self.api_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
+            self.account_id = os.getenv("OANDA_ACCOUNT_ID_LIVE", "001-001-20048243-002")
             self.environment = "live"
 
         self.api = API(access_token=self.api_key, environment=self.environment)
