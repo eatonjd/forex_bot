@@ -345,7 +345,7 @@ Format your output exactly in these sections:
 
         try:
             genai.configure(api_key=api_key)
-            model_name = GEMINI_MODEL or "gemini-2.0-flash"
+            model_name = GEMINI_MODEL or "gemini-flash-latest"
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
             return response.text
