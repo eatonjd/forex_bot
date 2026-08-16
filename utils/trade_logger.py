@@ -318,6 +318,7 @@ class TradeLogger:
         price: float = 0.0,
         pnl: float = None,
         account_type: str = "demo",
+        account_id: str = None,
         signal_data: Dict = None,
         market_data: Dict = None,
     ):
@@ -332,6 +333,7 @@ class TradeLogger:
             price: Fill price
             pnl: P/L (for close trades)
             account_type: "demo" or "live"
+            account_id: OANDA Account ID
             signal_data: RSI, BB position, confidence
             market_data: Current price, ATR, etc
         """
@@ -347,6 +349,7 @@ class TradeLogger:
             "price": price,
             "pnl": pnl,
             "account_type": account_type,
+            "account_id": account_id,
             # Signal context
             "rsi": signal_data.get("rsi"),
             "bb_position": signal_data.get("bb_position"),

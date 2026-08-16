@@ -42,6 +42,7 @@ from utils.volatility_breakout import VolatilityBreakoutStrategy
 from utils.range_trading import RangeTradingStrategy
 from utils.regime_detector import RegimeDetector, RegimeState
 from utils.trade_logger import TradeLogger
+from utils.news_filter import EconomicNewsFilter
 
 
 def is_forex_market_open() -> tuple:
@@ -237,6 +238,9 @@ class USDJPYRegimeBot:
         # State file
         self.state_file = "bot_state_regime.json"
 
+        # News Filter (Risk Gate)
+        self.news_filter = EconomicNewsFilter()
+
         # Logging
         self.logger = logging.getLogger("regime_bot")
         self.logger.setLevel(logging.INFO)
@@ -334,6 +338,19 @@ class USDJPYRegimeBot:
                     print(f"📍 [{inst}] Flat")
             except Exception as e:
                 print(f"⚠️ [{inst}] Sync error: {e}")
+
+    def send_bot_notification(self, msg: str, title: str = None):
+        """Send notification enriched with account ID and mode details."""
+        mode_str = "LIVE" if self.mode == "live" else "DEMO"
+        account_tag = f"Account: {self.account_id} ({self.mode.capitalize()})"
+        full_msg = f"{msg}\n📌 {account_tag}"
+        default_title = f"Regime Bot [{mode_str}: {self.account_id}]"
+        if notifier:
+            try:
+                notifier._send(full_msg, title=title or default_title)
+            except Exception as e:
+                print(f"⚠️ Notification failed: {e}")
+        print(f"📢 {full_msg}")
 
     def _send_startup_alert(self):
         """Send startup notification."""
@@ -514,7 +531,7 @@ class USDJPYRegimeBot:
                 )
                 err_msg = f"❌ [{instrument}] Order rejected by OANDA: {reason}"
                 print(err_msg)
-                send_notification(err_msg)
+                self.send_bot_notification(err_msg)
                 return False, 0
 
             price = float(fill.get("price", 0))
@@ -528,7 +545,7 @@ class USDJPYRegimeBot:
             print(f"✅ [{instrument}] {direction} {units}u @ {price} | SL: {sl_pips:.0f}p{tp_pips_str} | Regime: {regime}")
             
             tp_alert_str = f"SL: {sl_pips:.0f} pips | TP: {take_profit_dist / cfg['pip_size']:.0f} pips | Regime: {regime}" if take_profit_dist else f"SL: {sl_pips:.0f} pips | Regime: {regime}"
-            send_notification(
+            self.send_bot_notification(
                 f"🎯 {instrument} {direction} {units}u @ {price}\n"
                 f"{tp_alert_str}"
             )
@@ -552,6 +569,7 @@ class USDJPYRegimeBot:
                     symbol=instrument,  # Fix symbol logging bug
                     units=units, price=price,
                     account_type=self.mode,
+                    account_id=self.account_id,
                     signal_data=self.last_signal_data,
                     market_data=self.last_market_data,
                 )
@@ -563,12 +581,12 @@ class USDJPYRegimeBot:
             err_msg = f"❌ [{instrument}] Order execution failed: {e}"
             print(err_msg)
             try:
-                send_notification(err_msg)
+                self.send_bot_notification(err_msg)
             except Exception as notifier_err:
                 print(f"⚠️ Failed to send order failure alert: {notifier_err}")
             return False, 0
 
-    def close_position(self, instrument: str):
+    def close_position(self, instrument: str, reason: str = None):
         """Close position for an instrument."""
         try:
             pos_dir, pos_units, _, _ = self.get_current_position(instrument)
@@ -581,14 +599,23 @@ class USDJPYRegimeBot:
 
             key = "longOrderFillTransaction" if pos_dir == 1 else "shortOrderFillTransaction"
             pnl = float(r.response.get(key, {}).get("pl", 0))
+            exit_price = float(r.response.get(key, {}).get("price", 0.0))
+            if exit_price == 0.0:
+                try:
+                    exit_price = self._get_mid_price(instrument)
+                except Exception:
+                    pass
 
-            print(f"✅ [{instrument}] Closed. P/L: ${pnl:+.2f}")
-            send_notification(f"🎯 {instrument} Closed. P/L: ${pnl:+.2f}")
+            reason_str = f" ({reason})" if reason else ""
+            price_str = f" @ {exit_price}" if exit_price > 0 else ""
+            print(f"✅ [{instrument}] Closed{reason_str}. P/L: ${pnl:+.2f}{price_str}")
+            self.send_bot_notification(f"🎯 {instrument} Closed{reason_str}. P/L: ${pnl:+.2f}{price_str}")
 
             self.trades_today.append({
                 "time": datetime.now().isoformat(),
                 "instrument": instrument,
                 "direction": "CLOSE",
+                "price": exit_price,
                 "pnl": pnl,
                 "type": "CLOSE",
             })
@@ -598,14 +625,25 @@ class USDJPYRegimeBot:
                 logger.log_forex_trade(
                     action="CLOSE",
                     direction="LONG" if pos_dir == 1 else "SHORT",
-                    symbol=instrument,  # Fix symbol logging bug
-                    units=pos_units, pnl=pnl,
+                    symbol=instrument,
+                    units=pos_units,
+                    price=exit_price,  # FIXED: Pass exit price so telemetry logs accurately
+                    pnl=pnl,
                     account_type=self.mode,
+                    account_id=self.account_id,
                     signal_data=self.last_signal_data,
                     market_data=self.last_market_data,
                 )
             except Exception as e:
                 print(f"⚠️ Log error: {e}")
+
+            # Trigger automatic post-trade AI commentary & analysis
+            try:
+                from utils.post_trade_analyzer import PostTradeAnalyzer
+                analyzer = PostTradeAnalyzer()
+                analyzer.analyze_new_trades(days=1)
+            except Exception as pta_err:
+                print(f"⚠️ Post-trade analysis error: {pta_err}")
 
             self.daily_pnl += pnl
             istate = self._instrument_state[instrument]
@@ -619,7 +657,7 @@ class USDJPYRegimeBot:
             err_msg = f"❌ [{instrument}] Close execution failed: {e}"
             print(err_msg)
             try:
-                send_notification(err_msg)
+                self.send_bot_notification(err_msg)
             except Exception as notifier_err:
                 print(f"⚠️ Failed to send close failure alert: {notifier_err}")
             return False, 0
@@ -756,7 +794,7 @@ class USDJPYRegimeBot:
             # Time stop
             if hold_h >= max_hold:
                 print(f"⏱️ [{instrument}] TIME STOP after {hold_h:.1f}h")
-                self.close_position(instrument)
+                self.close_position(instrument, reason="Time stop")
                 return
 
             # Trailing profit
@@ -765,7 +803,7 @@ class USDJPYRegimeBot:
                     istate["trailing_active"] = True
                     istate["peak_profit"] = upl
                     print(f"🎯 [{instrument}] TRAILING at ${upl:+.2f}")
-                    send_notification(f"🎯 {instrument} Trailing at ${upl:+.2f}")
+                    self.send_bot_notification(f"🎯 {instrument} Trailing Active at ${upl:+.2f}")
 
                 if istate["trailing_active"] and upl > istate["peak_profit"]:
                     istate["peak_profit"] = upl
@@ -775,15 +813,19 @@ class USDJPYRegimeBot:
                     trail_amt = max(5.0, min(15.0, istate["peak_profit"] * 0.15))
                     if upl <= istate["peak_profit"] - trail_amt:
                         print(f"🔒 [{instrument}] TRAILING STOP ${upl:+.2f}")
-                        ok, rpnl = self.close_position(instrument)
-                        if ok:
-                            send_notification(f"🔒 {instrument} Trail stop ${rpnl:+.2f}")
+                        self.close_position(instrument, reason="Trail stop")
                         return
 
             return  # In position, skip entry logic
 
         # ─── ENTRY LOGIC (only when flat) ───
         active_regime = regime_state.regime
+
+        # ─── NEWS BLACKOUT RISK GATE ───
+        is_news_blocked, news_reason, _ = self.news_filter.is_blackout_active(instrument, pre_minutes=30, post_minutes=15)
+        if is_news_blocked:
+            print(f"🛡️ [{timestamp}] [{instrument}] NEWS BLACKOUT ACTIVE: {news_reason} — skipping new entries")
+            return
 
         # No new entries during transition or cooldown
         if active_regime == "TRANSITIONAL" or not regime_state.confirmed:
@@ -884,6 +926,14 @@ class USDJPYRegimeBot:
             print(f"   ⚠️ [{instrument}] SPREAD: {spread:.1f} > {max_spread:.1f}")
             return
 
+        # Calculate volume anomaly ratio & ADX metric
+        vol_ratio = 1.0
+        if "Volume" in df.columns and len(df) >= 20:
+            avg_vol = df["Volume"].iloc[-20:-1].mean()
+            if avg_vol > 0:
+                vol_ratio = df["Volume"].iloc[-1] / avg_vol
+        adx_val = getattr(regime_state, "adx", 25.0)
+
         # Execute entry
         if signal in ["BUY", "SELL"] and confidence >= 60:
             if active_regime == "MEAN_REVERSION":
@@ -901,6 +951,12 @@ class USDJPYRegimeBot:
                     df, idx, self.vol_stop_atr_mult
                 )
                 take_profit_dist = None
+
+                # Dynamic TP Scaling on Volume Anomalies (Volume >= 5.0x avg & ADX > 35)
+                if vol_ratio >= 5.0 and adx_val > 35.0:
+                    atr_val = stop_dist / self.vol_stop_atr_mult if self.vol_stop_atr_mult > 0 else stop_dist
+                    take_profit_dist = atr_val * 2.5
+                    print(f"🔥 [{instrument}] High-Volume Momentum Burst (Vol: {vol_ratio:.1f}x avg, ADX: {adx_val:.1f}) -> Scaling TP to 2.5x ATR ({take_profit_dist / cfg['pip_size']:.0f}p)")
 
             if stop_dist <= 0:
                 print(f"   ⚠️ [{instrument}] Bad stop distance")

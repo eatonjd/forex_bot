@@ -19,11 +19,11 @@ from utils.trade_logger import TradeLogger
 from utils.notifications import TradingNotifier
 from utils.reward_engine import ForexRewardEngine
 
+from config import GEMINI_MODEL, GEMINI_API_KEY
+
 from dotenv import load_dotenv
 load_dotenv()
 
-# Configure Gemini
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 class PostTradeAnalyzer:
     """Performs AI-driven post-trade analysis for completed forex trades."""
@@ -150,9 +150,14 @@ class PostTradeAnalyzer:
                 new_reviews.append(review_obj)
                 self.reviewed_keys.append(trade_key)
                 
-                # Send notification immediately
+                # Send notification immediately with account context
                 try:
-                    self.notifier._send(report, title=f"📊 Trade Review: {close_t.get('symbol')}")
+                    acct_id = close_t.get("account_id") or open_t.get("account_id") or ""
+                    acct_type = (close_t.get("account_type") or open_t.get("account_type") or "demo").upper()
+                    acct_info = f"{acct_id} ({acct_type})" if acct_id else acct_type
+                    
+                    full_report_msg = f"📌 Account: {acct_info}\n\n{report}"
+                    self.notifier._send(full_report_msg, title=f"📊 Trade Review: {close_t.get('symbol')} [{acct_type}]")
                 except Exception as e:
                     print(f"⚠️ Failed to send trade review notification: {e}")
 
@@ -220,6 +225,7 @@ class PostTradeAnalyzer:
             "Symbol": symbol,
             "Direction": direction,
             "PnL": f"${pnl:+.2f}",
+            "Account": f"{close_t.get('account_id', open_t.get('account_id', 'N/A'))} ({close_t.get('account_type', open_t.get('account_type', 'N/A'))})",
             "AI Reward Score": f"{reward_metrics['reward_score']:+.2f}",
             "Efficiency Score": f"{reward_metrics['efficiency_score']:+.2f}",
             "Rolling Portfolio Sortino": f"{sortino:.2f}",
@@ -247,8 +253,14 @@ Format your output exactly in these sections:
 3. **Adjustment Action**: Provide 1-2 highly specific recommendations for optimizing parameter values (e.g. SL/TP width, RSI thresholds, session parameters) based on this result.
 """
 
+        api_key = GEMINI_API_KEY or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            return self._generate_fallback_report(trade_context, "GOOGLE_API_KEY is missing")
+
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            genai.configure(api_key=api_key)
+            model_name = GEMINI_MODEL or "gemini-2.0-flash"
+            model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
             return response.text
         except Exception as e:
