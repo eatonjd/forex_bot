@@ -87,6 +87,7 @@ def build_trade_rows(trades, limit=20):
     sorted_trades = sorted(trades, key=lambda t: t.get("closeTime", ""), reverse=True)[:limit]
     rows = ""
     for t in sorted_trades:
+        inst = t.get("instrument", "USD_JPY")
         ot = t.get("openTime", "")[:16]
         ct = t.get("closeTime", "")[:16]
         units = int(float(t.get("initialUnits", 0)))
@@ -97,6 +98,7 @@ def build_trade_rows(trades, limit=20):
         emoji = "✅" if pnl > 0 else "❌"
         entry = float(t.get("price", 0))
         close_price = float(t.get("averageClosePrice", entry))
+        prec = 3 if "JPY" in inst else 5
 
         # Holding time
         try:
@@ -108,13 +110,16 @@ def build_trade_rows(trades, limit=20):
         except:
             hold_str = "-"
 
+        date_display = ct[5:].replace("T", " ") if ct else ot[5:].replace("T", " ")
+
         rows += f'''
         <tr>
-            <td>{emoji} {ot[5:]}</td>
+            <td>{emoji} {date_display}</td>
+            <td style="font-weight:600;color:#58a6ff;">{inst}</td>
             <td class="{dir_class}">{direction}</td>
             <td>{abs(units):,}</td>
-            <td>{entry:.3f}</td>
-            <td>{close_price:.3f}</td>
+            <td>{entry:.{prec}f}</td>
+            <td>{close_price:.{prec}f}</td>
             <td class="{pnl_class}">${pnl:+.2f}</td>
             <td>{hold_str}</td>
         </tr>'''
@@ -566,7 +571,7 @@ def generate_command_center_html():
                 <div class="trades-section">
                     <button class="trades-toggle" onclick="toggleTrades('mr')">▼ Recent Trades ({min(20, mr_stats_all["count"])})</button>
                     <div id="mr-trades" class="trades-body">
-                        <table><thead><tr><th>Date</th><th>Dir</th><th>Units</th><th>Entry</th><th>Exit</th><th>P/L</th><th>Hold</th></tr></thead>
+                        <table><thead><tr><th>Date</th><th>Pair</th><th>Dir</th><th>Units</th><th>Entry</th><th>Exit</th><th>P/L</th><th>Hold</th></tr></thead>
                         <tbody>{mr_trade_rows}</tbody></table>
                     </div>
                 </div>
@@ -577,7 +582,7 @@ def generate_command_center_html():
                 <div class="bot-header">
                     <div>
                         <div class="bot-name">💰 Mean Reversion</div>
-                        <div style="color:#8b949e;font-size:0.75rem;">USD/JPY • Real Capital</div>
+                        <div style="color:#8b949e;font-size:0.75rem;">Multi-Pair • Real Capital</div>
                     </div>
                     <span class="bot-badge badge-live">LIVE</span>
                 </div>
@@ -602,7 +607,7 @@ def generate_command_center_html():
                 </div>
                 <div class="open-positions">{live_open_html}</div>
                 <div class="trades-section">
-                    {f'<button class="trades-toggle" onclick="toggleTrades(\'live\')">▼ Recent Trades ({live_stats_all["count"]})</button><div id="live-trades" class="trades-body"><table><thead><tr><th>Date</th><th>Dir</th><th>Units</th><th>Entry</th><th>Exit</th><th>P/L</th><th>Hold</th></tr></thead><tbody>{live_trade_rows}</tbody></table></div>' if live_stats_all["count"] > 0 else '<div class="no-positions">No trades yet — waiting for first signal</div>'}
+                    {f'<button class="trades-toggle" onclick="toggleTrades(\'live\')">▼ Recent Trades ({live_stats_all["count"]})</button><div id="live-trades" class="trades-body"><table><thead><tr><th>Date</th><th>Pair</th><th>Dir</th><th>Units</th><th>Entry</th><th>Exit</th><th>P/L</th><th>Hold</th></tr></thead><tbody>{live_trade_rows}</tbody></table></div>' if live_stats_all["count"] > 0 else '<div class="no-positions">No trades yet — waiting for first signal</div>'}
                 </div>
             </div>
 
