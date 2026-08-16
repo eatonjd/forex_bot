@@ -151,16 +151,39 @@ def build_ai_reviews_section():
     reviews = []
     rewards = []
     
-    # Try loading from local file
+    # Try loading from GCS if available
     try:
-        if os.path.exists("trade_logs/trade_reviews.json"):
-            with open("trade_logs/trade_reviews.json", "r") as f:
-                reviews = json.load(f)
-        if os.path.exists("trade_logs/reward_history.json"):
-            with open("trade_logs/reward_history.json", "r") as f:
-                rewards = json.load(f)
-    except Exception as e:
-        print(f"Error loading AI reviews for command center: {e}", flush=True)
+        from google.cloud import storage
+        client = storage.Client()
+        bucket_name = os.getenv("GCS_BUCKET_NAME", "forex-bot-state")
+        bucket = client.bucket(bucket_name)
+        
+        blob_rev = bucket.blob("trade_logs/trade_reviews.json")
+        if blob_rev.exists():
+            reviews = json.loads(blob_rev.download_as_text())
+            
+        blob_rew = bucket.blob("trade_logs/reward_history.json")
+        if blob_rew.exists():
+            rewards = json.loads(blob_rew.download_as_text())
+    except Exception as gcs_err:
+        pass
+        
+    # Fallback to local files if not loaded from GCS
+    if not reviews:
+        try:
+            if os.path.exists("trade_logs/trade_reviews.json"):
+                with open("trade_logs/trade_reviews.json", "r") as f:
+                    reviews = json.load(f)
+        except Exception:
+            pass
+            
+    if not rewards:
+        try:
+            if os.path.exists("trade_logs/reward_history.json"):
+                with open("trade_logs/reward_history.json", "r") as f:
+                    rewards = json.load(f)
+        except Exception:
+            pass
 
     avg_reward = 0.0
     sortino_ratio = 0.0

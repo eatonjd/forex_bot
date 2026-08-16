@@ -10,6 +10,8 @@ import json
 import numpy as np
 import pandas as pd
 from datetime import datetime
+from dotenv import load_dotenv
+load_dotenv()
 from oandapyV20 import API
 from oandapyV20.endpoints.instruments import InstrumentsCandles
 

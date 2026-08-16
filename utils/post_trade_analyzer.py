@@ -77,7 +77,7 @@ class PostTradeAnalyzer:
         Returns:
             List of generated review summaries
         """
-        # Load all forex trades logged
+        # Load all forex trades logged from GCS/local, or fallback to OANDA API
         forex_file = self.logger.log_dir / "forex_trades.json"
         trades = []
 
@@ -86,35 +86,91 @@ class PostTradeAnalyzer:
                 blob = self.logger.gcs_bucket.blob("trade_logs/forex_trades.json")
                 if blob.exists():
                     trades = json.loads(blob.download_as_text())
+            except Exception as e:
+                print(f"⚠️ GCS load forex_trades error: {e}")
+
+        if not trades and forex_file.exists():
+            try:
+                with open(forex_file, "r") as f:
+                    trades = json.load(f)
             except Exception:
                 pass
 
-        if not trades and forex_file.exists():
-            with open(forex_file, "r") as f:
-                trades = json.load(f)
-
-        if not trades:
-            print("⚠️ No logged trades found in forex_trades.json")
-            return []
-
-        # Parse and pair OPEN and CLOSE events
         closed_trades = []
-        open_trades_map = {}
+        if trades:
+            # Parse and pair OPEN and CLOSE events
+            open_trades_map = {}
+            for t in trades:
+                symbol = t.get("symbol")
+                action = t.get("action")
+                if action == "OPEN":
+                    open_trades_map[symbol] = t
+                elif action == "CLOSE":
+                    open_trade = open_trades_map.pop(symbol, None)
+                    if open_trade:
+                        closed_trades.append({
+                            "open": open_trade,
+                            "close": t
+                        })
 
-        # Scan chronologically to pair OPEN and CLOSE events
-        for t in trades:
-            symbol = t.get("symbol")
-            action = t.get("action")
-            
-            if action == "OPEN":
-                open_trades_map[symbol] = t
-            elif action == "CLOSE":
-                open_trade = open_trades_map.pop(symbol, None)
-                if open_trade:
-                    closed_trades.append({
-                        "open": open_trade,
-                        "close": t
-                    })
+        # If no paired trades found in log files, pull directly from OANDA API
+        if not closed_trades:
+            try:
+                from oandapyV20 import API
+                from oandapyV20.endpoints.trades import TradesList
+                
+                # Try live account first, then demo
+                for env_key, acct_key, env_name, acct_type in [
+                    ("OANDA_API_KEY_LIVE", "OANDA_ACCOUNT_ID_LIVE", "live", "LIVE"),
+                    ("OANDA_API_KEY", "OANDA_ACCOUNT_ID", "practice", "DEMO"),
+                    ("OANDA_API_KEY_DEMO", "OANDA_ACCOUNT_ID_DEMO", "practice", "DEMO"),
+                ]:
+                    api_k = os.getenv(env_key)
+                    acct_id = os.getenv(acct_key)
+                    if not api_k or not acct_id:
+                        continue
+                    try:
+                        oanda_api = API(access_token=api_k, environment=env_name)
+                        r = TradesList(accountID=acct_id, params={"state": "CLOSED", "count": 20})
+                        oanda_api.request(r)
+                        raw_list = r.response.get("trades", [])
+                        for t in raw_list:
+                            units = float(t.get("initialUnits", 0))
+                            pnl = float(t.get("realizedPL", 0))
+                            price = float(t.get("price", 0))
+                            close_price = float(t.get("averageClosePrice", price))
+                            ot = t.get("openTime", "")
+                            ct = t.get("closeTime", "")
+                            closed_trades.append({
+                                "open": {
+                                    "symbol": t.get("instrument"),
+                                    "direction": "LONG" if units > 0 else "SHORT",
+                                    "units": abs(units),
+                                    "price": price,
+                                    "timestamp": ot,
+                                    "account_id": acct_id,
+                                    "account_type": acct_type,
+                                    "signal_reason": "MEAN_REVERSION"
+                                },
+                                "close": {
+                                    "symbol": t.get("instrument"),
+                                    "direction": "LONG" if units > 0 else "SHORT",
+                                    "units": abs(units),
+                                    "price": close_price,
+                                    "pnl": pnl,
+                                    "timestamp": ct,
+                                    "account_id": acct_id,
+                                    "account_type": acct_type,
+                                }
+                            })
+                    except Exception as oanda_err:
+                        print(f"⚠️ OANDA pull closed trades error for {acct_type}: {oanda_err}")
+            except Exception as e:
+                print(f"⚠️ Direct OANDA fetch error: {e}")
+
+        if not closed_trades:
+            print("⚠️ No closed trades found to review")
+            return []
 
         # Filter for new closed trades that haven't been reviewed
         new_reviews = []
@@ -125,25 +181,53 @@ class PostTradeAnalyzer:
             # Generate a unique key for the trade
             trade_key = f"{close_t.get('symbol')}_{open_t.get('timestamp')}_{close_t.get('timestamp')}"
             
-            # Skip if already reviewed or older than scan window
+            # Skip if already reviewed
             if trade_key in self.reviewed_keys:
                 continue
                 
-            close_time = datetime.fromisoformat(close_t.get("timestamp"))
-            if datetime.now() - close_time > timedelta(days=days):
-                continue
+            try:
+                close_time_str = close_t.get("timestamp", "").replace("Z", "+00:00")
+                close_time = datetime.fromisoformat(close_time_str)
+                # If timezone aware vs naive
+                if close_time.tzinfo:
+                    now = datetime.now(close_time.tzinfo)
+                else:
+                    now = datetime.now()
+                if (now - close_time) > timedelta(days=days):
+                    continue
+            except Exception:
+                pass
+
+            # Calculate duration & reward metrics
+            try:
+                ot_str = open_t.get("timestamp", "").replace("Z", "+00:00")
+                ct_str = close_t.get("timestamp", "").replace("Z", "+00:00")
+                ot = datetime.fromisoformat(ot_str)
+                ct_dt = datetime.fromisoformat(ct_str)
+                duration_hrs = (ct_dt - ot).total_seconds() / 3600.0
+            except Exception:
+                duration_hrs = 0.0
+
+            pnl = float(close_t.get("pnl", 0.0))
+            reward_metrics = self.reward_engine.calculate_trade_reward(
+                pnl=pnl,
+                duration_hrs=duration_hrs,
+                atr=open_t.get("atr"),
+                units=open_t.get("units", 10000),
+                regime=open_t.get("signal_reason", "MEAN_REVERSION")
+            )
 
             # Run Gemini analysis
-            report = self._generate_gemini_report(open_t, close_t)
+            report = self._generate_gemini_report(open_t, close_t, reward_metrics=reward_metrics, duration_hrs=duration_hrs)
             if report:
                 review_obj = {
                     "trade_key": trade_key,
                     "symbol": close_t.get("symbol"),
                     "direction": open_t.get("direction"),
-                    "pnl": close_t.get("pnl", 0.0),
-                    "duration_hrs": round(duration_hrs, 2) if 'duration_hrs' in locals() else 0.0,
-                    "reward_score": reward_metrics["reward_score"] if 'reward_metrics' in locals() else 0.0,
-                    "efficiency_score": reward_metrics["efficiency_score"] if 'reward_metrics' in locals() else 0.0,
+                    "pnl": pnl,
+                    "duration_hrs": round(duration_hrs, 2),
+                    "reward_score": reward_metrics.get("reward_score", 0.0),
+                    "efficiency_score": reward_metrics.get("efficiency_score", 0.0),
                     "report": report,
                     "timestamp": close_t.get("timestamp")
                 }
@@ -193,9 +277,9 @@ class PostTradeAnalyzer:
 
         return new_reviews
 
-    def _generate_gemini_report(self, open_t: dict, close_t: dict) -> str:
+    def _generate_gemini_report(self, open_t: dict, close_t: dict, reward_metrics: dict = None, duration_hrs: float = None) -> str:
         """Use Gemini to construct a structured post-trade analysis report."""
-        pnl = close_t.get("pnl", 0.0)
+        pnl = float(close_t.get("pnl", 0.0))
         symbol = close_t.get("symbol")
         direction = close_t.get("direction")
         entry_price = open_t.get("price")
@@ -203,22 +287,24 @@ class PostTradeAnalyzer:
         units = open_t.get("units", 10000)
         atr = open_t.get("atr")
         
-        # Calculate duration
-        try:
-            ot = datetime.fromisoformat(open_t.get("timestamp"))
-            ct = datetime.fromisoformat(close_t.get("timestamp"))
-            duration_hrs = (ct - ot).total_seconds() / 3600.0
-        except Exception:
-            duration_hrs = 0.0
+        # Calculate duration if not provided
+        if duration_hrs is None:
+            try:
+                ot = datetime.fromisoformat(open_t.get("timestamp", "").replace("Z", "+00:00"))
+                ct = datetime.fromisoformat(close_t.get("timestamp", "").replace("Z", "+00:00"))
+                duration_hrs = (ct - ot).total_seconds() / 3600.0
+            except Exception:
+                duration_hrs = 0.0
 
-        # Calculate Quantitative AI Reward Score
-        reward_metrics = self.reward_engine.calculate_trade_reward(
-            pnl=pnl,
-            duration_hrs=duration_hrs,
-            atr=atr,
-            units=units,
-            regime=open_t.get("signal_reason", "MEAN_REVERSION")
-        )
+        # Calculate Quantitative AI Reward Score if not provided
+        if reward_metrics is None:
+            reward_metrics = self.reward_engine.calculate_trade_reward(
+                pnl=pnl,
+                duration_hrs=duration_hrs,
+                atr=atr,
+                units=units,
+                regime=open_t.get("signal_reason", "MEAN_REVERSION")
+            )
         sortino = self.reward_engine.calculate_rolling_sortino()
 
         trade_context = {
