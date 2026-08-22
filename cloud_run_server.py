@@ -749,9 +749,15 @@ if __name__ == "__main__":
     print("🔧 CLOUD RUN SERVER STARTING", flush=True)
     print("=" * 60, flush=True)
     print("🔍 Environment Variables Check:", flush=True)
+    bot_mode = os.environ.get("BOT_MODE", "paper")
+    bot_type = os.environ.get("BOT_TYPE", "regime")
     oanda_key = os.environ.get("OANDA_API_KEY")
     oanda_account = os.environ.get("OANDA_ACCOUNT_ID")
     oanda_env = os.environ.get("OANDA_ENVIRONMENT")
+    oanda_live_key = os.environ.get("OANDA_API_KEY_LIVE")
+    oanda_live_account = os.environ.get("OANDA_ACCOUNT_ID_LIVE")
+    print(f"   BOT_MODE: {bot_mode.upper()}", flush=True)
+    print(f"   BOT_TYPE: {bot_type}", flush=True)
     print(
         f"   OANDA_API_KEY: {'SET (len={})'.format(len(oanda_key)) if oanda_key else '❌ NOT SET'}",
         flush=True,
@@ -762,6 +768,14 @@ if __name__ == "__main__":
     )
     print(
         f"   OANDA_ENVIRONMENT: {oanda_env if oanda_env else '❌ NOT SET'}", flush=True
+    )
+    print(
+        f"   OANDA_API_KEY_LIVE: {'SET (len={})'.format(len(oanda_live_key)) if oanda_live_key else '❌ NOT SET'}",
+        flush=True,
+    )
+    print(
+        f"   OANDA_ACCOUNT_ID_LIVE: {oanda_live_account if oanda_live_account else '❌ NOT SET'}",
+        flush=True,
     )
     print("=" * 60, flush=True)
 

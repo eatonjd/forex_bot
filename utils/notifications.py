@@ -115,19 +115,9 @@ class SmsNotifier:
         self.smtp_server = smtp_server
         self.smtp_port = smtp_port
 
-        # Gateway: AT&T uses [number]@txt.att.net
+        # Carrier Email-to-SMS gateways deprecated (e.g. AT&T/PureTalk)
         self.gateway = "@txt.att.net"
-        self.enabled = bool(self.to_number and self.smtp_user and self.smtp_pass)
-
-        if self.enabled:
-            # Format number (remove non-digits)
-            self.clean_number = "".join(filter(str.isdigit, self.to_number))
-            self.to_address = f"{self.clean_number}{self.gateway}"
-            print(f"✅ SMS notifications enabled for: {self.clean_number}")
-        else:
-            print(
-                "📱 SMS disabled - set SMS_PHONE_NUMBER, SMTP_USER, and SMTP_PASSWORD"
-            )
+        self.enabled = False
 
     def send(self, message: str, title: str = None) -> bool:
         if not self.enabled:

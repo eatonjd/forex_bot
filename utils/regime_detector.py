@@ -62,8 +62,8 @@ class RegimeDetector:
         adx_period: int = 14,
         sma_fast: int = 20,
         sma_slow: int = 50,
-        confirm_candles: int = 2,
-        cooldown_candles: int = 2,
+        confirm_candles: int = 1,
+        cooldown_candles: int = 1,
     ):
         self.atr_period = atr_period
         self.atr_avg_lookback = atr_avg_lookback

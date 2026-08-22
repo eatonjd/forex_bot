@@ -43,6 +43,7 @@ from utils.range_trading import RangeTradingStrategy
 from utils.regime_detector import RegimeDetector, RegimeState
 from utils.trade_logger import TradeLogger
 from utils.news_filter import EconomicNewsFilter
+from utils.environment_parity_checker import EnvironmentParityChecker
 
 
 def is_forex_market_open() -> tuple:
@@ -92,49 +93,49 @@ class USDJPYRegimeBot:
             "pip_value_fn": "jpy",
             "max_spread": 4.0,
             "margin_rate": 0.05,
-            "strategies": ["MEAN_REVERSION", "BREAKOUT"],
+            "strategies": ["MEAN_REVERSION", "BREAKOUT", "TREND_FOLLOWING", "RANGE"],
         },
         "GBP_USD": {
             "pip_size": 0.0001,
             "pip_value_fn": "direct",
             "max_spread": 4.0,
             "margin_rate": 0.05,
-            "strategies": ["MEAN_REVERSION", "BREAKOUT"],
+            "strategies": ["MEAN_REVERSION", "BREAKOUT", "TREND_FOLLOWING", "RANGE"],
         },
         "USD_CAD": {
             "pip_size": 0.0001,
             "pip_value_fn": "jpy",
             "max_spread": 4.0,
             "margin_rate": 0.02,
-            "strategies": ["MEAN_REVERSION", "BREAKOUT"],
+            "strategies": ["MEAN_REVERSION", "BREAKOUT", "TREND_FOLLOWING", "RANGE"],
         },
         "EUR_USD": {
             "pip_size": 0.0001,
             "pip_value_fn": "direct",
             "max_spread": 3.0,
             "margin_rate": 0.02,
-            "strategies": ["MEAN_REVERSION", "BREAKOUT"],
+            "strategies": ["MEAN_REVERSION", "BREAKOUT", "TREND_FOLLOWING", "RANGE"],
         },
         "AUD_USD": {
             "pip_size": 0.0001,
             "pip_value_fn": "direct",
             "max_spread": 3.0,
             "margin_rate": 0.03,
-            "strategies": ["MEAN_REVERSION", "BREAKOUT"],
+            "strategies": ["MEAN_REVERSION", "BREAKOUT", "TREND_FOLLOWING", "RANGE"],
         },
         "EUR_JPY": {
             "pip_size": 0.01,
             "pip_value_fn": "jpy",
             "max_spread": 4.0,
             "margin_rate": 0.04,
-            "strategies": ["MEAN_REVERSION", "BREAKOUT"],
+            "strategies": ["MEAN_REVERSION", "BREAKOUT", "TREND_FOLLOWING", "RANGE"],
         },
         "XAU_USD": {
             "pip_size": 0.01,
             "pip_value_fn": "direct",
             "max_spread": 50.0,
             "margin_rate": 0.05,
-            "strategies": ["BREAKOUT"],  # Gold: breakout only
+            "strategies": ["BREAKOUT", "TREND_FOLLOWING"],  # Gold: breakout & trend only
         },
     }
 
@@ -188,7 +189,7 @@ class USDJPYRegimeBot:
             self.regime_detectors[inst] = RegimeDetector(
                 atr_period=14, atr_avg_lookback=50,
                 adx_period=14, sma_fast=20, sma_slow=50,
-                confirm_candles=2, cooldown_candles=2,
+                confirm_candles=1, cooldown_candles=1,
             )
 
         # Track last regime state per instrument for UI
@@ -237,6 +238,9 @@ class USDJPYRegimeBot:
 
         # State file
         self.state_file = "bot_state_regime.json"
+
+        # Dual Environment Parity Auditor
+        self.parity_checker = EnvironmentParityChecker(current_mode=self.mode)
 
         # News Filter (Risk Gate)
         self.news_filter = EconomicNewsFilter()
@@ -340,14 +344,13 @@ class USDJPYRegimeBot:
                 print(f"⚠️ [{inst}] Sync error: {e}")
 
     def send_bot_notification(self, msg: str, title: str = None):
-        """Send notification enriched with account ID and mode details."""
-        mode_str = "LIVE" if self.mode == "live" else "DEMO"
-        account_tag = f"Account: {self.account_id} ({self.mode.capitalize()})"
-        full_msg = f"{msg}\n📌 {account_tag}"
-        default_title = f"Regime Bot [{mode_str}: {self.account_id}]"
+        """Send notification enriched with prominent LIVE / DEMO badge and account ID."""
+        is_live = (self.mode == "live")
+        badge = f"🔴 [LIVE | {self.account_id}]" if is_live else f"🧪 [DEMO | {self.account_id}]"
+        full_msg = f"{badge}\n\n{msg}" if not msg.startswith(badge) else msg
         if notifier:
             try:
-                notifier._send(full_msg, title=title or default_title)
+                notifier._send(full_msg, title=title or badge)
             except Exception as e:
                 print(f"⚠️ Notification failed: {e}")
         print(f"📢 {full_msg}")
@@ -357,7 +360,7 @@ class USDJPYRegimeBot:
         try:
             balance = self.get_account_balance()
             regime = self.regime_detectors["USD_JPY"]._current_regime if "USD_JPY" in self.regime_detectors else "UNKNOWN"
-            send_notification(
+            self.send_bot_notification(
                 f"🚀 REGIME BOT Started\n"
                 f"Mode: {self.mode.upper()}\n"
                 f"Balance: ${balance:,.2f} (sim ${self.simulated_balance:,.0f})\n"
@@ -576,6 +579,20 @@ class USDJPYRegimeBot:
             except Exception as e:
                 print(f"⚠️ Log error: {e}")
 
+            # ─── Dual Environment Parity Verification ───
+            try:
+                self.parity_checker.check_and_notify_parity(
+                    instrument=instrument,
+                    direction=direction,
+                    units=units,
+                    entry_price=price,
+                    regime=regime,
+                    max_spread=cfg.get("max_spread", 4.0),
+                    margin_rate=cfg.get("margin_rate", 0.02)
+                )
+            except Exception as parity_err:
+                print(f"⚠️ Parity check error: {parity_err}", flush=True)
+
             return True, price
         except Exception as e:
             err_msg = f"❌ [{instrument}] Order execution failed: {e}"
@@ -770,7 +787,7 @@ class USDJPYRegimeBot:
                 hold_h = (datetime.now() - istate["entry_time"]).total_seconds() / 3600
 
             # Determine max hold and trailing based on entry regime
-            if entry_regime == "BREAKOUT":
+            if entry_regime in ["BREAKOUT", "TREND_FOLLOWING"]:
                 max_hold = self.vol_max_holding_hours
                 trail_trigger = self.vol_trailing_trigger
                 use_trailing = True
@@ -872,13 +889,13 @@ class USDJPYRegimeBot:
             confidence = signal_data["confidence"]
             reason = signal_data.get("reason", "")
 
-            # MR: use regime filter from original bot
-            # In MEAN_REVERSION regime, we only take the MR signals
-            # that are appropriate for the SMA direction
+            # In MEAN_REVERSION regime, require stronger exhaustion on counter-trend moves
+            # (allow strong oversold bounces RSI < 28 or overbought shorts RSI > 72 even if SMA opposes)
             sma_dir = regime_state.sma_direction
-            if signal == "BUY" and sma_dir == "BEARISH":
+            rsi_val = signal_data.get("rsi", 50)
+            if signal == "BUY" and sma_dir == "BEARISH" and rsi_val > 28:
                 signal = "HOLD"
-            elif signal == "SELL" and sma_dir == "BULLISH":
+            elif signal == "SELL" and sma_dir == "BULLISH" and rsi_val < 72:
                 signal = "HOLD"
 
             # If Mean Reversion has no signal, fall back to Range Trading Strategy
@@ -946,7 +963,7 @@ class USDJPYRegimeBot:
                     stop_dist = self.mr_stop_loss_pips * cfg["pip_size"]
                     take_profit_dist = None
             else:
-                # Breakout: ATR-based dynamic stop
+                # Breakout / Trend Following: ATR-based dynamic stop
                 stop_dist = self.vol_strategy.calculate_dynamic_stop(
                     df, idx, self.vol_stop_atr_mult
                 )
