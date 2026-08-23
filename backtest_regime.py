@@ -25,7 +25,7 @@ from utils.volatility_breakout import VolatilityBreakoutStrategy
 from utils.range_trading import RangeTradingStrategy
 from utils.regime_detector import RegimeDetector
 
-# Pair configurations matched to usdjpy_regime_bot.py
+# Pair configurations matched to forex_regime_bot.py
 PAIR_CONFIGS = {
     "USD_JPY": {
         "ticker": "USDJPY=X",

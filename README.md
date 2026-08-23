@@ -53,7 +53,7 @@ gcloud run deploy forex-bot-live --source . --region us-central1 --project big-e
 gcloud run services logs tail forex-bot-live --region us-central1 --project big-e-trading-bot
 
 # Run a local paper trading dry-run once
-python3 -c "from usdjpy_regime_bot import USDJPYRegimeBot; USDJPYRegimeBot(mode='paper').run_once()"
+python3 -c "from forex_regime_bot import ForexRegimeBot; ForexRegimeBot(mode='paper').run_once()"
 ```
 
 ---
@@ -72,7 +72,7 @@ Real-time alert integrations dispatch notifications for:
 
 ```
 forex_bot/
-├── usdjpy_regime_bot.py   # Main multi-symbol regime trading bot
+├── forex_regime_bot.py    # Main multi-symbol regime trading bot
 ├── cloud_run_server.py    # Cloud Run server wrapper
 ├── command_center.py      # Streamlit/CLI dashboard & control panel
 ├── utils/

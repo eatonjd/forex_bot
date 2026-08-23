@@ -45,10 +45,10 @@ def init_bot():
     try:
         bot_type = os.getenv("BOT_TYPE", "regime").lower()
         if bot_type == "regime":
-            print("📦 Importing USD/JPY Regime Bot...", flush=True)
-            from usdjpy_regime_bot import USDJPYRegimeBot
-            print("🏗️  Instantiating USD/JPY Regime Bot...", flush=True)
-            bot = USDJPYRegimeBot(mode=os.getenv("BOT_MODE", "paper"))
+            print("📦 Importing Forex Regime Bot...", flush=True)
+            from forex_regime_bot import ForexRegimeBot
+            print("🏗️  Instantiating Forex Regime Bot...", flush=True)
+            bot = ForexRegimeBot(mode=os.getenv("BOT_MODE", "paper"))
             bot_status["initialization"]["oanda_connected"] = True
             bot_status["initialization"]["model_loaded"] = True
             bot_status["initialization"]["position_manager_ready"] = True
