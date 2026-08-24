@@ -83,6 +83,17 @@ class ForexRegimeBot:
     volatility breakout in trending/volatile markets, and range trading in consolidations.
     """
 
+    # Per-instrument fallback prices (used when live pricing API is unavailable)
+    INSTRUMENT_PRICE_FALLBACKS = {
+        "USD_JPY": 150.0,
+        "GBP_USD": 1.27,
+        "USD_CAD": 1.37,
+        "EUR_USD": 1.09,
+        "AUD_USD": 0.65,
+        "EUR_JPY": 163.0,
+        "XAU_USD": 2400.0,
+    }
+
     # Per-instrument configuration
     INSTRUMENT_CONFIG = {
         "USD_JPY": {
@@ -101,7 +112,7 @@ class ForexRegimeBot:
         },
         "USD_CAD": {
             "pip_size": 0.0001,
-            "pip_value_fn": "jpy",
+            "pip_value_fn": "cad",  # Quote is CAD; pip value = pip_size / price (similar to JPY pairs)
             "max_spread": 4.0,
             "margin_rate": 0.02,
             "strategies": ["MEAN_REVERSION", "BREAKOUT", "TREND_FOLLOWING", "RANGE"],
@@ -241,6 +252,10 @@ class ForexRegimeBot:
 
         # News Filter (Risk Gate)
         self.news_filter = EconomicNewsFilter()
+        self._last_news_refresh = datetime.now()  # Track when we last refreshed the news calendar
+
+        # Cached balance (refreshed once per run_once() cycle to avoid redundant API calls)
+        self._cached_balance: float = 0.0
 
         # Logging
         self.logger = logging.getLogger("regime_bot")
@@ -455,9 +470,15 @@ class ForexRegimeBot:
 
     # ─── Position Sizing ─────────────────────────────────────────
 
-    def calculate_position_size(self, instrument: str, stop_distance_price: float) -> int:
-        """Position size based on actual account balance, capped by margin capacity."""
-        current_balance = self.get_account_balance()
+    def calculate_position_size(self, instrument: str, stop_distance_price: float, cached_balance: float = None) -> int:
+        """Position size based on actual account balance, capped by margin capacity.
+        
+        Args:
+            instrument: Instrument to size (e.g. "USD_CAD")
+            stop_distance_price: Stop distance in price units
+            cached_balance: Pre-fetched balance from run_once() to avoid redundant API calls
+        """
+        current_balance = cached_balance if cached_balance and cached_balance > 0 else self.get_account_balance()
         if current_balance <= 0:
             current_balance = self.simulated_balance
             
@@ -467,12 +488,14 @@ class ForexRegimeBot:
 
         try:
             price = self._get_mid_price(instrument)
-        except:
-            price = 155.0 if instrument == "USD_JPY" else 2300.0
+        except Exception as e:
+            price = self.INSTRUMENT_PRICE_FALLBACKS.get(instrument, 1.0)
+            print(f"⚠️ [{instrument}] Price fetch failed ({e}), using fallback: {price}")
 
-        if cfg["pip_value_fn"] == "jpy":
+        pip_value_fn = cfg["pip_value_fn"]
+        if pip_value_fn in ("jpy", "cad"):  # Quote currency is not USD — pip value depends on price
             pip_value_per_unit = pip_size / price
-        else:
+        else:  # "direct" — quote currency IS USD, pip value is fixed
             pip_value_per_unit = pip_size
 
         stop_pips = stop_distance_price / pip_size
@@ -734,11 +757,21 @@ class ForexRegimeBot:
                     self.close_position(inst)
             return
 
+        # Refresh news calendar every 4 hours (the in-memory calendar goes stale otherwise)
+        now = datetime.now()
+        if (now - self._last_news_refresh).total_seconds() >= 14400:
+            print("🗓️ Refreshing economic news calendar...")
+            self.news_filter.fetch_fresh_calendar()
+            self._last_news_refresh = now
+
+        # Cache account balance once per cycle (passed to position sizing to avoid N API calls)
+        self._cached_balance = self.get_account_balance()
+
         # Process each instrument independently
         for inst in self.instruments:
-            self._process_instrument(inst)
+            self._process_instrument(inst, cached_balance=self._cached_balance)
 
-    def _process_instrument(self, instrument: str):
+    def _process_instrument(self, instrument: str, cached_balance: float = None):
         """Process a single instrument under its own regime."""
         cfg = self.INSTRUMENT_CONFIG[instrument]
         istate = self._instrument_state[instrument]
@@ -800,10 +833,16 @@ class ForexRegimeBot:
                 max_hold = self.mr_max_holding_hours
                 trail_trigger = self.mr_trailing_trigger
                 use_trailing = True
-            else:  # RANGE
+            elif entry_regime in ["RANGE", "VOLATILITY_SQUEEZE"]:
+                # Range / squeeze trades use fixed TP at channel boundaries — no trailing
                 max_hold = self.mr_max_holding_hours
                 trail_trigger = self.mr_trailing_trigger
-                use_trailing = False  # Range trades still use fixed TP at channel boundaries
+                use_trailing = False
+            else:
+                # EXTREME_VOLATILITY or unknown — apply shortest hold, no trailing
+                max_hold = min(self.mr_max_holding_hours, self.vol_max_holding_hours)
+                trail_trigger = self.vol_trailing_trigger
+                use_trailing = False
 
             trail_str = " 🎯" if istate["trailing_active"] else ""
             print(
@@ -984,7 +1023,7 @@ class ForexRegimeBot:
                 print(f"   ⚠️ [{instrument}] Bad stop distance")
                 return
 
-            units = self.calculate_position_size(instrument, stop_dist)
+            units = self.calculate_position_size(instrument, stop_dist, cached_balance=cached_balance)
             sl_pips = stop_dist / cfg["pip_size"]
 
             action = "BUY" if signal == "BUY" else "SELL"
@@ -1000,26 +1039,39 @@ class ForexRegimeBot:
     # ─── Health Endpoint Data ────────────────────────────────────
 
     def get_health_data(self) -> dict:
-        """Return health data for the endpoint."""
-        # Use USD_JPY as the main regime for the health payload
+        """Return health data for the endpoint. Dynamically uses first active instrument for regime."""
         regime_name = "UNKNOWN"
         regime_reason = ""
         regime_confirmed = False
-        
-        if "USD_JPY" in self.regime_detectors:
-            rd = self.regime_detectors["USD_JPY"]
-            regime_name = rd._current_regime
-            regime_confirmed = rd._cooldown_remaining == 0 and rd._pending_regime is None
-            if "USD_JPY" in self.last_regime_states:
-                regime_reason = getattr(self.last_regime_states["USD_JPY"], "reason", "")
+        regime_instrument = None
+
+        # Use first instrument that has an active detector and a cached regime state
+        for inst in self.instruments:
+            if inst in self.regime_detectors:
+                rd = self.regime_detectors[inst]
+                regime_name = rd._current_regime
+                regime_confirmed = rd._cooldown_remaining == 0 and rd._pending_regime is None
+                regime_instrument = inst
+                if inst in self.last_regime_states:
+                    regime_reason = getattr(self.last_regime_states[inst], "reason", "")
+                break
+
+        # Also include per-instrument regime map for richer dashboards
+        regime_map = {}
+        for inst in self.instruments:
+            rd = self.regime_detectors.get(inst)
+            if rd:
+                regime_map[inst] = rd._current_regime
 
         market_open, _ = is_forex_market_open()
         return {
             "bot": "regime_switcher",
             "mode": self.mode,
             "regime": regime_name,
+            "regime_instrument": regime_instrument,
             "regime_confirmed": regime_confirmed,
             "regime_reason": regime_reason,
+            "regime_map": regime_map,
             "market_open": market_open,
             "instruments": self.instruments,
             "daily_pnl": round(self.daily_pnl, 2),

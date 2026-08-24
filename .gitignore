@@ -53,3 +53,13 @@ plots/
 
 # NEVER commit your API keys!
 backtest_decisions_*.csv
+
+# Quick deploy scripts may source credentials from .env
+quick_deploy.sh
+
+# Runtime state files (managed by the bot)
+bot_state*.json
+gcs_trade_logs.json
+paper_bot_deep_dive_analysis.json
+last_6_losses.json
+pair_scanner_results.json

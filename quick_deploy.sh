@@ -1,12 +1,15 @@
 #!/bin/bash
 # Quick Deploy Script
-# Sets environment variables and deploys to Cloud Run
+# Loads credentials from .env and deploys to Cloud Run.
+# DO NOT hardcode API keys here — use .env or Secret Manager.
 
-export OANDA_API_KEY="029fd0b11f5079ccccb4ab14b5f5638b-32865d7468197e4231101be7bc6f3863"
-export OANDA_ACCOUNT_ID="101-001-11289252-001"
+if [ -f .env ]; then
+    source .env
+fi
 
-echo "✅ Environment variables set"
-echo "🚀 Starting deployment..."
-echo ""
+if [ -z "$OANDA_API_KEY" ] && [ -z "$OANDA_API_KEY_LIVE" ]; then
+    echo "❌ OANDA_API_KEY or OANDA_API_KEY_LIVE must be set in .env"
+    exit 1
+fi
 
 ./deploy_gcloud.sh

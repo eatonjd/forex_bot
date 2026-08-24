@@ -174,6 +174,9 @@ def download_trades():
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment;filename=forex_trade_history.csv"}
     )
+
+
+@app.route("/health")
 def health_check():
     """Comprehensive health check endpoint"""
     from version import __version__, __commit__
