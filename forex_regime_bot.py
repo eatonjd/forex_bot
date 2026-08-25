@@ -214,7 +214,7 @@ class ForexRegimeBot:
 
         # MR-specific settings
         self.mr_stop_loss_pips = 20
-        self.mr_take_profit_pips = 20    # Fixed TP target for MR trades
+        self.mr_take_profit_pips = 20    # Fixed TP target for MR trades (fallback; min_rr_multiple takes effect)
         self.mr_trailing_trigger = 20.0  # Activate trailing at $20
         self.mr_trailing_amount = 10.0   # Trail by $10
         self.mr_max_holding_hours = 12
@@ -224,6 +224,11 @@ class ForexRegimeBot:
         self.vol_trailing_atr_mult = 2.0
         self.vol_trailing_trigger = 25.0
         self.vol_max_holding_hours = 8
+
+        # Minimum Risk:Reward enforcement — applied to ALL trade types at entry.
+        # If take_profit_dist is not set by a strategy, it is forced to stop_dist * min_rr_multiple.
+        # At 42% win rate, break-even requires R:R >= 1.38. This enforces a profitable buffer.
+        self.min_rr_multiple = 1.5
 
         # Per-instrument state
         self._instrument_state = {}
@@ -1003,15 +1008,15 @@ class ForexRegimeBot:
                     stop_dist = signal_data["stop_dist"]
                     take_profit_dist = signal_data["take_profit_dist"]
                 else:
-                    # MR: fixed stop loss in pips, no fixed Take Profit (handled by trailing stop)
+                    # MR: fixed stop loss in pips
                     stop_dist = self.mr_stop_loss_pips * cfg["pip_size"]
-                    take_profit_dist = None
+                    take_profit_dist = None  # Will be set by min R:R enforcement below
             else:
                 # Breakout / Trend Following: ATR-based dynamic stop
                 stop_dist = self.vol_strategy.calculate_dynamic_stop(
                     df, idx, self.vol_stop_atr_mult
                 )
-                take_profit_dist = None
+                take_profit_dist = None  # Will be set by min R:R enforcement below
 
                 # Dynamic TP Scaling on Volume Anomalies (Volume >= 5.0x avg & ADX > 35)
                 if vol_ratio >= 5.0 and adx_val > 35.0:
@@ -1022,6 +1027,16 @@ class ForexRegimeBot:
             if stop_dist <= 0:
                 print(f"   ⚠️ [{instrument}] Bad stop distance")
                 return
+
+            # ─── Minimum R:R Enforcement ────────────────────────────────────────
+            # If no strategy-specific TP was set (range / volume-burst already set one),
+            # enforce TP at min_rr_multiple × stop_dist to guarantee viable risk:reward.
+            # At 42% live WR, break-even requires R:R ≥ 1.38. We enforce 1.5.
+            if take_profit_dist is None:
+                take_profit_dist = stop_dist * self.min_rr_multiple
+                tp_pips = take_profit_dist / cfg["pip_size"]
+                sl_pips_preview = stop_dist / cfg["pip_size"]
+                print(f"   📐 [{instrument}] R:R enforced {self.min_rr_multiple}:1 | SL: {sl_pips_preview:.0f}p | TP: {tp_pips:.0f}p")
 
             units = self.calculate_position_size(instrument, stop_dist, cached_balance=cached_balance)
             sl_pips = stop_dist / cfg["pip_size"]
