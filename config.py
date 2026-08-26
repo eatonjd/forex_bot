@@ -148,7 +148,7 @@ OLLAMA_TEMPERATURE = 0.7  # 0.0-2.0, lower = more deterministic
 # Gemini AI Analysis (Cloud API)
 ENABLE_GEMINI_ANALYSIS = LLM_PROVIDER == "gemini"  # Auto-set based on provider
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 GEMINI_TEMPERATURE = 0.7  # 0.0-2.0, lower = more deterministic
 GEMINI_USE_IN_SCANNER = False  # Integrate with multi-symbol scanner
 GEMINI_RATE_LIMIT_SECONDS = 3600  # Minimum seconds between calls per symbol
