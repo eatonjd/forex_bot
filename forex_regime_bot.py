@@ -206,10 +206,11 @@ class ForexRegimeBot:
         # Simulated balance for position sizing
         self.simulated_balance = 5000.0
 
-        # Risk management
-        self.risk_percent = 0.015  # 1.5% per trade
+        # Risk management — reduced to 1.0% while proving R:R enforcement is profitable.
+        # At ~$304 balance: risk ~$3/trade. Raise back to 1.5% once bot shows positive edge.
+        self.risk_percent = 0.01  # 1.0% per trade
         self.max_margin_utilization = 0.50  # Capped at 50% of NAV in margin usage
-        self.max_daily_loss = -150.0
+        self.max_daily_loss = -30.0  # Scaled down from -$150 for ~$304 balance
         self.daily_pnl = 0.0
 
         # MR-specific settings
