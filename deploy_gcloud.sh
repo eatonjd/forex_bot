@@ -162,13 +162,13 @@ gcloud run deploy ${SERVICE_NAME} \
     --platform managed \
     --region ${REGION} \
     --allow-unauthenticated \
-    --memory 1Gi \
+    --memory 512Mi \
     --cpu 1 \
-    --min-instances 1 \
+    --min-instances 0 \
     --max-instances 1 \
     --concurrency 1 \
-    --timeout 3600 \
-    --no-cpu-throttling \
+    --timeout 300 \
+    --cpu-throttling \
     --set-env-vars "OANDA_API_KEY=${OANDA_API_KEY}" \
     --set-env-vars "OANDA_ACCOUNT_ID=${OANDA_ACCOUNT_ID}" \
     --set-env-vars "OANDA_ENVIRONMENT=practice" \
