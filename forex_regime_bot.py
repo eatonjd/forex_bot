@@ -218,7 +218,7 @@ class ForexRegimeBot:
         self.mr_take_profit_pips = 20    # Fixed TP target for MR trades (fallback; min_rr_multiple takes effect)
         self.mr_trailing_trigger = 20.0  # Activate trailing at $20
         self.mr_trailing_amount = 10.0   # Trail by $10
-        self.mr_max_holding_hours = 12
+        self.mr_max_holding_hours = 6    # Shortened to 6h to eliminate stagnant capital tie-up (Gemini AI recommendation)
 
         # Breakout-specific settings
         self.vol_stop_atr_mult = 1.5
@@ -963,10 +963,23 @@ class ForexRegimeBot:
             signal = signal_data["signal"]
             confidence = signal_data["confidence"]
             reason = signal_data.get("reason", "")
+
+            # Guard against late-stage trend exhaustion on high ADX (Gemini post-trade review recommendation)
+            adx_val = getattr(regime_state, "adx", 25.0)
+            if signal in ["BUY", "SELL"] and adx_val > 38.0:
+                print(f"   ⚠️ [{instrument}] Breakout skipped: ADX {adx_val:.1f} > 38.0 (late-stage trend exhaustion risk)")
+                signal = "HOLD"
+                confidence = 35
+                reason = f"Breakout skipped: ADX {adx_val:.1f} > 38.0 (late-stage exhaustion)"
         else:  # TRANSITIONAL or unknown
             signal = "HOLD"
             confidence = 30
             reason = f"Regime {active_regime} - no new entries allowed"
+
+        # Populate rich telemetry context for TradeLogger & Gemini post-trade analysis
+        current_rsi = signal_data.get("rsi") if isinstance(signal_data, dict) else None
+        current_bb_pos = signal_data.get("bb_position") if isinstance(signal_data, dict) else None
+        current_atr = getattr(regime_state, "atr", None)
 
         self.last_signal_data = {
             "instrument": instrument,
@@ -974,11 +987,15 @@ class ForexRegimeBot:
             "signal": signal,
             "confidence": confidence,
             "reason": reason,
+            "rsi": current_rsi,
+            "bb_position": current_bb_pos,
         }
         self.last_market_data = {
             "instrument": instrument,
             "price": current_price,
+            "current_price": current_price,
             "spread": spread,
+            "atr": current_atr,
         }
 
         print(
@@ -1038,6 +1055,14 @@ class ForexRegimeBot:
                 tp_pips = take_profit_dist / cfg["pip_size"]
                 sl_pips_preview = stop_dist / cfg["pip_size"]
                 print(f"   📐 [{instrument}] R:R enforced {self.min_rr_multiple}:1 | SL: {sl_pips_preview:.0f}p | TP: {tp_pips:.0f}p")
+
+            # ─── Minimum Take-Profit vs. Spread Ratio Check ──────────────────────
+            # Require expected TP distance >= 4x entry spread to eliminate negative efficiency micro-trades
+            if spread and spread > 0 and take_profit_dist is not None:
+                tp_pips = take_profit_dist / cfg["pip_size"]
+                if tp_pips < (spread * 4.0):
+                    print(f"   ⚠️ [{instrument}] Entry skipped: TP {tp_pips:.1f}p < 4x spread ({spread:.1f}p * 4 = {spread * 4.0:.1f}p)")
+                    return
 
             units = self.calculate_position_size(instrument, stop_dist, cached_balance=cached_balance)
             sl_pips = stop_dist / cfg["pip_size"]
