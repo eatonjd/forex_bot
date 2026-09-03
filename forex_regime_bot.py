@@ -265,7 +265,13 @@ class ForexRegimeBot:
 
         # Logging
         self.logger = logging.getLogger("regime_bot")
-        self.logger.setLevel(logging.INFO)
+        # Gemini In-Flight Copilot (Requirement #2)
+        try:
+            from utils.gemini_copilot import ForexInFlightCopilot
+            self.copilot = ForexInFlightCopilot()
+        except Exception as e:
+            print(f"⚠️ Failed to load ForexInFlightCopilot: {e}")
+            self.copilot = None
 
         self.load_state()
         self._sync_positions()
@@ -881,7 +887,50 @@ class ForexRegimeBot:
                     if upl <= istate["peak_profit"] - trail_amt:
                         print(f"🔒 [{instrument}] TRAILING STOP ${upl:+.2f}")
                         self.close_position(instrument, reason="Trail stop")
-                        return
+            # ─── Gemini In-Flight Copilot Evaluation (Requirement #2) ───
+            if self.copilot and self.copilot.should_evaluate(
+                instrument=instrument,
+                pos_dir=pos_dir,
+                upl=upl,
+                hold_h=hold_h,
+                entry_regime=entry_regime,
+                current_regime=regime_state.regime,
+                peak_profit=istate.get("peak_profit", 0.0),
+            ):
+                indicators = {
+                    "rsi": float(df.iloc[-1].get("RSI", 50)) if "RSI" in df.columns else None,
+                    "adx": float(df.iloc[-1].get("ADX", 20)) if "ADX" in df.columns else None,
+                    "atr": float(df.iloc[-1].get("ATR", 0)) if "ATR" in df.columns else None,
+                }
+                cp_decision = self.copilot.evaluate_position(
+                    instrument=instrument,
+                    direction="LONG" if pos_dir == 1 else "SHORT",
+                    units=abs(pos_units),
+                    entry_price=entry_price,
+                    current_price=current_price,
+                    upl=upl,
+                    hold_h=hold_h,
+                    entry_regime=entry_regime,
+                    current_regime=regime_state.regime,
+                    peak_profit=istate.get("peak_profit", 0.0),
+                    indicators=indicators,
+                )
+                cp_action = cp_decision.get("action", "HOLD")
+                cp_conf = cp_decision.get("confidence", 0.5)
+                cp_rationale = cp_decision.get("rationale", "")
+
+                if cp_action == "CLOSE_NOW" and cp_conf >= 0.70:
+                    print(f"🤖 [{instrument}] Gemini Copilot triggered early close ({cp_conf*100:.0f}% conf): {cp_rationale}", flush=True)
+                    self.send_bot_notification(
+                        f"🤖 *[GEMINI IN-FLIGHT EXIT]* `{instrument}`\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"Action: *CLOSE NOW* ({cp_conf*100:.0f}% conf)\n"
+                        f"PnL: *${upl:+.2f}* | Hold: {hold_h:.1f}h\n"
+                        f"Rationale: {cp_rationale}\n"
+                        f"━━━━━━━━━━━━━━━━━━"
+                    )
+                    self.close_position(instrument, reason=f"Gemini Copilot: {cp_rationale}")
+                    return
 
             return  # In position, skip entry logic
 
