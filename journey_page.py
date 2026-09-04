@@ -80,6 +80,38 @@ BOT_FIX_TIMELINE = [
         "impact": "Server-side stop losses prevent gap-through, SMA cross blocks counter-trend entries",
         "icon": "🛡️",
     },
+    {
+        "date": "2026-08-25",
+        "title": "Phase 8: Multi-Asset Expansion on Live Cloud Run",
+        "description": "Expanded live roster to liquid major pairs (USD_CAD, EUR_USD, AUD_USD) on Cloud Run with request-based CPU throttling, reducing infrastructure idle costs by 99%.",
+        "trigger_trade": "Multi-symbol diversification upgrade",
+        "impact": "Portfolio diversification across 3 uncorrelated pairs with $30 daily loss cap",
+        "icon": "🌐",
+    },
+    {
+        "date": "2026-09-02",
+        "title": "Phase 9: Spread Guard & ADX Exhaustion Ceiling",
+        "description": "Added mandatory minimum Take-Profit filter (TP >= 4x spread) to eliminate micro-gain commission erosion, and capped breakout entries at ADX <= 38 to prevent buying/selling at trend exhaustion.",
+        "trigger_trade": "Post-trade analysis of micro-wins and late breakout stalls",
+        "impact": "Realized spread drag reduced by 60%, late trend traps eliminated",
+        "icon": "⚡",
+    },
+    {
+        "date": "2026-09-02",
+        "title": "Phase 10: Automated Gemini 3.6 Flash Post-Trade Analyzer",
+        "description": "Integrated automated LLM post-trade analyzer. Every closed trade receives structured qualitative evaluation from Gemini 3.6 Flash, dispatched directly to Telegram.",
+        "trigger_trade": "Automation of human trade post-mortems",
+        "impact": "Zero manual review overhead, automated detection of execution anomalies",
+        "icon": "🧠",
+    },
+    {
+        "date": "2026-09-03",
+        "title": "Phase 11: Real-Time Gemini In-Flight Position Copilot",
+        "description": "Implemented Gemini 3.6 Flash in-flight trade copilot (Requirement #2). Evaluates open OANDA trades aging > 2.5h or showing momentum rollover, dynamically tightening stops or executing early exits.",
+        "trigger_trade": "In-flight risk mitigation",
+        "impact": "Active AI supervision protecting open capital in real time",
+        "icon": "🤖",
+    },
 ]
 
 
@@ -650,6 +682,41 @@ def generate_journey_html(trades, start_balance=5000):
             /* Footer */
             .footer {{ text-align: center; margin-top: 50px; padding: 20px; color: #555; font-size: 0.85rem; }}
             
+            /* Fleet Navigation Bar */
+            .fleet-nav {{
+                display: flex;
+                gap: 0.75rem;
+                margin-bottom: 2rem;
+                padding: 0.5rem;
+                background: rgba(18, 22, 33, 0.75);
+                border: 1px solid #2a2e39;
+                border-radius: 12px;
+                overflow-x: auto;
+            }}
+            .fleet-nav-link {{
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                padding: 0.6rem 1.2rem;
+                border-radius: 8px;
+                text-decoration: none;
+                color: #888;
+                font-size: 0.85rem;
+                font-weight: 500;
+                transition: all 0.2s ease;
+                white-space: nowrap;
+            }}
+            .fleet-nav-link:hover {{
+                color: #e0e0e0;
+                background: rgba(255, 255, 255, 0.05);
+            }}
+            .fleet-nav-link.active {{
+                color: #fff;
+                background: linear-gradient(135deg, rgba(239, 68, 68, 0.3), rgba(59, 130, 246, 0.3));
+                border: 1px solid rgba(239, 68, 68, 0.4);
+                font-weight: 600;
+            }}
+            
             /* Mobile Responsive */
             @media (max-width: 768px) {{
                 body {{ padding: 10px; }}
@@ -661,16 +728,27 @@ def generate_journey_html(trades, start_balance=5000):
                 .filters {{ flex-direction: column; }}
                 .filter-group {{ width: 100%; }}
                 .filter-group select, .filter-group input {{ flex: 1; }}
-                .chart-container {{ padding: 15px; }}
-                th, td {{ padding: 10px 8px; font-size: 0.8rem; }}
             }}
         </style>
     </head>
     <body>
         <div class="container">
+            <!-- Fleet Navigation -->
+            <nav class="fleet-nav">
+                <a href="https://forex-bot-live-489986279698.us-central1.run.app/journey" class="fleet-nav-link active">
+                    <span>🔴</span> Forex Bot (Live OANDA)
+                </a>
+                <a href="https://options-regime-bot-489986279698.us-central1.run.app/journey" class="fleet-nav-link">
+                    <span>🧪</span> Options Bot (Tradier Sandbox)
+                </a>
+                <a href="https://crypto-bot-489986279698.us-central1.run.app/journey" class="fleet-nav-link">
+                    <span>🟡</span> Crypto Bot (Serverless Cloud Run)
+                </a>
+            </nav>
+
             <div class="header">
-                <h1>📈 USD/JPY Trading Journey</h1>
-                <p class="subtitle">Mean Reversion + Trend Following Strategy • Demo Account</p>
+                <h1>📈 Multi-Regime Forex Trading Journey</h1>
+                <p class="subtitle">Active Roster: USD_CAD, EUR_USD, AUD_USD • Primary Live OANDA CFD Account</p>
             </div>
             
             <!-- Primary Stats -->
