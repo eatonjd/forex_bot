@@ -959,6 +959,7 @@ class ForexRegimeBot:
 
         # Get signal from active strategy
         idx = len(df) - 1
+        signal_data = {}
         if active_regime == "EXTREME_VOLATILITY":
             signal = "HOLD"
             confidence = 95

@@ -113,60 +113,69 @@ class PostTradeAnalyzer:
                             "close": t
                         })
 
-        # If no paired trades found in log files, pull directly from OANDA API
-        if not closed_trades:
-            try:
-                from oandapyV20 import API
-                from oandapyV20.endpoints.trades import TradesList
-                
-                # Try live account first, then demo
-                for env_key, acct_key, env_name, acct_type in [
+        # Always query OANDA API directly for closed trades (both live and demo)
+        try:
+            from oandapyV20 import API
+            from oandapyV20.endpoints.trades import TradesList
+            
+            # Prioritize configured environment mode
+            current_mode = os.getenv("BOT_MODE", "live").lower()
+            if current_mode == "live":
+                account_configs = [
                     ("OANDA_API_KEY_LIVE", "OANDA_ACCOUNT_ID_LIVE", "live", "LIVE"),
                     ("OANDA_API_KEY", "OANDA_ACCOUNT_ID", "practice", "DEMO"),
                     ("OANDA_API_KEY_DEMO", "OANDA_ACCOUNT_ID_DEMO", "practice", "DEMO"),
-                ]:
-                    api_k = os.getenv(env_key)
-                    acct_id = os.getenv(acct_key)
-                    if not api_k or not acct_id:
-                        continue
-                    try:
-                        oanda_api = API(access_token=api_k, environment=env_name)
-                        r = TradesList(accountID=acct_id, params={"state": "CLOSED", "count": 20})
-                        oanda_api.request(r)
-                        raw_list = r.response.get("trades", [])
-                        for t in raw_list:
-                            units = float(t.get("initialUnits", 0))
-                            pnl = float(t.get("realizedPL", 0))
-                            price = float(t.get("price", 0))
-                            close_price = float(t.get("averageClosePrice", price))
-                            ot = t.get("openTime", "")
-                            ct = t.get("closeTime", "")
-                            closed_trades.append({
-                                "open": {
-                                    "symbol": t.get("instrument"),
-                                    "direction": "LONG" if units > 0 else "SHORT",
-                                    "units": abs(units),
-                                    "price": price,
-                                    "timestamp": ot,
-                                    "account_id": acct_id,
-                                    "account_type": acct_type,
-                                    "signal_reason": "MEAN_REVERSION"
-                                },
-                                "close": {
-                                    "symbol": t.get("instrument"),
-                                    "direction": "LONG" if units > 0 else "SHORT",
-                                    "units": abs(units),
-                                    "price": close_price,
-                                    "pnl": pnl,
-                                    "timestamp": ct,
-                                    "account_id": acct_id,
-                                    "account_type": acct_type,
-                                }
-                            })
-                    except Exception as oanda_err:
-                        print(f"⚠️ OANDA pull closed trades error for {acct_type}: {oanda_err}")
-            except Exception as e:
-                print(f"⚠️ Direct OANDA fetch error: {e}")
+                ]
+            else:
+                account_configs = [
+                    ("OANDA_API_KEY", "OANDA_ACCOUNT_ID", "practice", "DEMO"),
+                    ("OANDA_API_KEY_DEMO", "OANDA_ACCOUNT_ID_DEMO", "practice", "DEMO"),
+                    ("OANDA_API_KEY_LIVE", "OANDA_ACCOUNT_ID_LIVE", "live", "LIVE"),
+                ]
+
+            for env_key, acct_key, env_name, acct_type in account_configs:
+                api_k = os.getenv(env_key)
+                acct_id = os.getenv(acct_key)
+                if not api_k or not acct_id:
+                    continue
+                try:
+                    oanda_api = API(access_token=api_k, environment=env_name)
+                    r = TradesList(accountID=acct_id, params={"state": "CLOSED", "count": 20})
+                    oanda_api.request(r)
+                    raw_list = r.response.get("trades", [])
+                    for t in raw_list:
+                        units = float(t.get("initialUnits", 0))
+                        pnl = float(t.get("realizedPL", 0))
+                        price = float(t.get("price", 0))
+                        close_price = float(t.get("averageClosePrice", price))
+                        ot = t.get("openTime", "")
+                        ct = t.get("closeTime", "")
+                        closed_trades.append({
+                            "open": {
+                                "symbol": t.get("instrument"),
+                                "direction": "LONG" if units > 0 else "SHORT",
+                                "units": abs(units),
+                                "price": price,
+                                "timestamp": ot,
+                                "account_id": acct_id,
+                                "account_type": acct_type,
+                                "signal_reason": "MEAN_REVERSION"
+                            },
+                            "close": {
+                                "symbol": t.get("instrument"),
+                                "direction": "LONG" if units > 0 else "SHORT",
+                                "units": abs(units),
+                                "price": close_price,
+                                "pnl": pnl,
+                                "timestamp": ct,
+                                "account_id": acct_id,
+                                "account_type": acct_type,
+                            }
+                        })
+                except Exception as oanda_err:
+                    print(f"⚠️ OANDA pull closed trades error for {acct_type}: {oanda_err}")
+        except Exception as e:
+            print(f"⚠️ Direct OANDA fetch error: {e}")
 
         if not closed_trades:
             print("⚠️ No closed trades found to review")
@@ -174,6 +183,7 @@ class PostTradeAnalyzer:
 
         # Filter for new closed trades that haven't been reviewed
         new_reviews = []
+        seen_keys = set()
         for ct in closed_trades:
             open_t = ct["open"]
             close_t = ct["close"]
@@ -181,9 +191,10 @@ class PostTradeAnalyzer:
             # Generate a unique key for the trade
             trade_key = f"{close_t.get('symbol')}_{open_t.get('timestamp')}_{close_t.get('timestamp')}"
             
-            # Skip if already reviewed
-            if trade_key in self.reviewed_keys:
+            # Skip if already reviewed or duplicate in batch
+            if trade_key in seen_keys or trade_key in self.reviewed_keys:
                 continue
+            seen_keys.add(trade_key)
                 
             try:
                 close_time_str = close_t.get("timestamp", "").replace("Z", "+00:00")
