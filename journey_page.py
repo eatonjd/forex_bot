@@ -791,32 +791,109 @@ def generate_journey_html(trades, start_balance=5000):
                 </div>
             </div>
             
-            <!-- Go-Live Readiness (Phase 7.3 Reset) -->
+            <!-- Capital Scaling Scorecard & 25-Trade Gate -->
             <div class="section-header">
-                <span class="icon">🎯</span>
-                <h2>Go-Live Readiness (Phase 7.3 Reset)</h2>
+                <span class="icon">🚀</span>
+                <h2>Capital Scaling Scorecard & 25-Trade Live Gate</h2>
             </div>
+            
             <div class="stat-card" style="text-align:left; padding: 25px; margin-bottom: 30px; border-left: 5px solid #4ecdc4;">
-                <div style="font-size:0.9rem; color:#888; margin-bottom:15px;">
-                    Tracking progress for <strong>Phase 7.3</strong> (Regime + SMA Cross filter deployment) towards live trading qualification.
-                </div>
-                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
-                    <div style="padding: 10px;">
-                        <div style="font-size:0.8rem; color:#888;">TOTAL TRADES</div>
-                        <div style="font-size:1.5rem; font-weight:bold;">{p73_count} / 50</div>
-                        <div style="height:8px; background:rgba(255,255,255,0.1); border-radius:4px; margin-top:8px;">
-                            <div style="height:100%; width:{min(p73_count / 50 * 100, 100):.0f}%; background:#4ecdc4; border-radius:4px;"></div>
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 15px;">
+                    <div>
+                        <div style="font-size:1.1rem; font-weight:700; color:#fff;">Live Baseline: $308.48 &bull; Next Capital Injection: +$700.00 &rarr; $1,000.00 Target</div>
+                        <div style="font-size:0.85rem; color:#aaa; margin-top:3px;">
+                            Primary OANDA Live CFD Account (<code>001-001-20048243-002</code>) &bull; 25 closed live trades required before deploying additional funds.
                         </div>
                     </div>
-                    <div style="padding: 10px;">
-                        <div style="font-size:0.8rem; color:#888;">WIN RATE (GOAL: >55%)</div>
-                        <div style="font-size:1.5rem; font-weight:bold; color:{"#4caf50" if p73_wr >= 55 else "#ffc107" if p73_wr >= 45 else "#f44336"}">{p73_wr:.1f}%</div>
-                        <div style="font-size:0.75rem; color:#888; margin-top:4px;">Status: {"✅ REACHED" if p73_wr >= 55 else "🟡 TRACKING" if p73_wr >= 45 else "❌ BELOW GOAL"}</div>
+                    <div style="background: rgba(78, 205, 196, 0.15); border: 1px solid rgba(78, 205, 196, 0.3); color: #4ecdc4; padding: 6px 14px; border-radius: 20px; font-size: 0.85rem; font-weight: 700;">
+                        {min(p73_count, 25)} / 25 LIVE TRADES ({min(100, p73_count / 25 * 100):.0f}%)
                     </div>
-                    <div style="padding: 10px;">
-                        <div style="font-size:0.8rem; color:#888;">MAX DRAWDOWN (GOAL: <10%)</div>
-                        <div style="font-size:1.5rem; font-weight:bold; color:{"#4caf50" if p73_max_dd < 10 else "#f44336"}">{p73_max_dd:.1f}%</div>
-                        <div style="font-size:0.75rem; color:#888; margin-top:4px;">Status: {"✅ SAFE" if p73_max_dd < 10 else "❌ BREACHED"}</div>
+                </div>
+
+                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 1: SAMPLE SIZE</div>
+                        <div style="font-size:1.4rem; font-weight:bold; color:#4ecdc4; margin: 4px 0;">{p73_count} / 25</div>
+                        <div style="height:6px; background:rgba(255,255,255,0.1); border-radius:3px; margin: 6px 0;">
+                            <div style="height:100%; width:{min(p73_count / 25 * 100, 100):.0f}%; background:#4ecdc4; border-radius:3px;"></div>
+                        </div>
+                        <div style="font-size:0.75rem; color:#aaa;">Status: {"✅ QUALIFIED" if p73_count >= 25 else f"🟡 {max(0, 25 - p73_count)} TRADES LEFT"}</div>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 2: WIN RATE (&ge; 55%)</div>
+                        <div style="font-size:1.4rem; font-weight:bold; color:{"#4caf50" if p73_wr >= 55 else "#ffc107" if p73_wr >= 45 else "#f44336"}; margin: 4px 0;">{p73_wr:.1f}%</div>
+                        <div style="font-size:0.75rem; color:#aaa; margin-top:8px;">Status: {"✅ PASS" if p73_wr >= 55 else "🟡 TRACKING" if p73_wr >= 45 else "❌ BELOW GOAL"}</div>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 3: PROFIT FACTOR (&ge; 1.50)</div>
+                        <div style="font-size:1.4rem; font-weight:bold; color:#4ecdc4; margin: 4px 0;">{profit_factor:.2f}</div>
+                        <div style="font-size:0.75rem; color:#aaa; margin-top:8px;">Status: {"✅ PASS" if profit_factor >= 1.50 else "🟡 TRACKING"}</div>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 4: MAX DRAWDOWN (&le; 5%)</div>
+                        <div style="font-size:1.4rem; font-weight:bold; color:{"#4caf50" if p73_max_dd <= 5 else "#f44336"}; margin: 4px 0;">{p73_max_dd:.1f}%</div>
+                        <div style="font-size:0.75rem; color:#aaa; margin-top:8px;">Status: {"✅ SAFE" if p73_max_dd <= 5 else "❌ BREACHED"}</div>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 5: SPREAD GUARD (TP &ge; 4x)</div>
+                        <div style="font-size:1.4rem; font-weight:bold; color:#4caf50; margin: 4px 0;">ACTIVE</div>
+                        <div style="font-size:0.75rem; color:#aaa; margin-top:8px;">Status: ✅ SPREAD DRAG &le; 15%</div>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 6: REAL-TIME AI COPILOT</div>
+                        <div style="font-size:1.4rem; font-weight:bold; color:#4ecdc4; margin: 4px 0;">Gemini 3.6</div>
+                        <div style="font-size:0.75rem; color:#aaa; margin-top:8px;">Status: ✅ IN-FLIGHT DEFENSE</div>
+                    </div>
+                </div>
+
+                <!-- Capital Scaling Ladder -->
+                <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 20px;">
+                    <div style="font-size: 1rem; font-weight: 700; color: #fff; margin-bottom: 15px;">💰 Forex Capital Scaling Ladder</div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px;">
+                        <div style="background: rgba(78, 205, 196, 0.05); border: 1px solid rgba(78, 205, 196, 0.4); border-radius: 10px; padding: 15px;">
+                            <div style="font-size: 0.75rem; color: #4ecdc4; font-weight: bold;">CURRENT BASELINE</div>
+                            <div style="font-size: 1.3rem; font-weight: bold; color: #fff; margin: 4px 0;">$308.48 Live</div>
+                            <div style="font-size: 0.8rem; color: #aaa; line-height: 1.4;">
+                                &bull; Micro-lot execution (1,000 units)<br>
+                                &bull; Testing 3-pair live execution<br>
+                                &bull; $30 daily stop loss ceiling
+                            </div>
+                        </div>
+
+                        <div style="background: rgba(76, 175, 80, 0.05); border: 1px solid rgba(76, 175, 80, 0.4); border-radius: 10px; padding: 15px;">
+                            <div style="font-size: 0.75rem; color: #4caf50; font-weight: bold;">TRANCHE 1: CAPITAL SCALE</div>
+                            <div style="font-size: 1.3rem; font-weight: bold; color: #4caf50; margin: 4px 0;">$1,000.00</div>
+                            <div style="font-size: 0.8rem; color: #aaa; line-height: 1.4;">
+                                &bull; <strong>Deposit:</strong> +$700.00 transfer<br>
+                                &bull; <strong>Position Sizing:</strong> 3,000–5,000 units<br>
+                                &bull; <strong>Prerequisite:</strong> Pass 25-trade gates
+                            </div>
+                        </div>
+
+                        <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 15px;">
+                            <div style="font-size: 0.75rem; color: #aaa; font-weight: bold;">TRANCHE 2: ALPHA EXPANSION</div>
+                            <div style="font-size: 1.3rem; font-weight: bold; color: #fff; margin: 4px 0;">$2,500.00</div>
+                            <div style="font-size: 0.8rem; color: #aaa; line-height: 1.4;">
+                                &bull; <strong>Position Sizing:</strong> 8,000–10,000 units<br>
+                                &bull; <strong>Prerequisite:</strong> 50 live trades with PF &ge; 1.40<br>
+                                &bull; Max drawdown &le; 6%
+                            </div>
+                        </div>
+
+                        <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 15px;">
+                            <div style="font-size: 0.75rem; color: #aaa; font-weight: bold;">TRANCHE 3: FULL PRODUCTION</div>
+                            <div style="font-size: 1.3rem; font-weight: bold; color: #fff; margin: 4px 0;">$5,000.00+</div>
+                            <div style="font-size: 0.8rem; color: #aaa; line-height: 1.4;">
+                                &bull; <strong>Position Sizing:</strong> 15,000+ units<br>
+                                &bull; Compound profit reinvestment<br>
+                                &bull; Sharpe Ratio &ge; 1.50 across 60 days
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
