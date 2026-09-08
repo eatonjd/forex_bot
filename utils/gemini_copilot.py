@@ -21,13 +21,20 @@ class ForexInFlightCopilot:
         self.last_evaluation_times: Dict[str, float] = {}  # instrument -> epoch timestamp
 
         # Configure Gemini API
-        self.api_key = os.getenv("GOOGLE_API_KEY", "AIzaSyAt50SSEIqvi-hwlRI8PQNjDW1Y-_bBuv4")
+        self.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         try:
-            genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel(self.model_name)
-            self.enabled = True
-            print(f"🤖 Forex In-Flight Copilot initialized ({self.model_name})", flush=True)
+            from utils.gemini_health import check_gemini_health
+            h = check_gemini_health(model_name=self.model_name, bot_name="Forex Bot")
+            if h.get("healthy"):
+                genai.configure(api_key=self.api_key)
+                self.model = genai.GenerativeModel(self.model_name)
+                self.enabled = True
+                print(f"🤖 Forex In-Flight Copilot initialized ({self.model_name}) (pre-flight verified)", flush=True)
+            else:
+                print(f"⚠️ Gemini pre-flight check failed in copilot: {h.get('status')} - {h.get('error')}", flush=True)
+                self.model = None
+                self.enabled = False
         except Exception as e:
             print(f"⚠️ Failed to initialize Forex Gemini Copilot: {e}", flush=True)
             self.model = None

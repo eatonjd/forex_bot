@@ -22,7 +22,7 @@ cp .env.example .env
 2. **Add your API key** to `.env`:
 
 ```
-GOOGLE_API_KEY=AIzaSyA8vHgd_sM-Z-4RATilxhE3ULzp5QCyBI4
+GOOGLE_API_KEY=your_gemini_api_key_here
 ```
 
 3. **Add `.env` to `.gitignore`** (if not already):

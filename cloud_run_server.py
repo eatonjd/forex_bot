@@ -745,8 +745,28 @@ def review_trades():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/gemini-health", methods=["GET"])
+def gemini_health():
+    """Pre-flight check Gemini API key status, model availability, and latency."""
+    try:
+        from utils.gemini_health import check_gemini_health
+        force = request.args.get("force", "false").lower() == "true"
+        status = check_gemini_health(force=force, bot_name="Forex Bot")
+        code = 200 if status.get("healthy") else 503
+        return jsonify(status), code
+    except Exception as e:
+        return jsonify({"healthy": False, "status": "ERROR", "error": str(e)}), 500
+
+
 
 if __name__ == "__main__":
+    # Pre-flight verify Gemini API key
+    try:
+        from utils.gemini_health import check_gemini_health
+        check_gemini_health(force=True, bot_name="Forex Bot")
+    except Exception as e:
+        print(f"⚠️ Gemini pre-flight check error: {e}", flush=True)
+
     # DEBUG: Check environment variables at startup
     print("=" * 60, flush=True)
     print("🔧 CLOUD RUN SERVER STARTING", flush=True)

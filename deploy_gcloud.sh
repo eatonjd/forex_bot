@@ -151,10 +151,10 @@ fi
 echo ""
 echo "🚀 Deploying to Cloud Run..."
 
-# Build secrets flag if smtp-password exists
-SECRETS_FLAG=""
+# Build secrets flag
+SECRETS_FLAG="--set-secrets=GOOGLE_API_KEY=gemini-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest"
 if gcloud secrets describe smtp-password &> /dev/null 2>&1; then
-    SECRETS_FLAG="--set-secrets=SMTP_PASSWORD=smtp-password:latest"
+    SECRETS_FLAG="${SECRETS_FLAG},SMTP_PASSWORD=smtp-password:latest"
 fi
 
 gcloud run deploy ${SERVICE_NAME} \
@@ -180,7 +180,7 @@ gcloud run deploy ${SERVICE_NAME} \
     --set-env-vars "SMTP_USER=${SMTP_USER:-}" \
     --set-env-vars "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}" \
     --set-env-vars "TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}" \
-    --set-env-vars "GOOGLE_API_KEY=${GOOGLE_API_KEY:-}" \
+    --set-env-vars "GEMINI_MODEL=gemini-3.6-flash" \
     $SECRETS_FLAG
 
 echo ""

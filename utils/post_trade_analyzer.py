@@ -350,13 +350,19 @@ Format your output exactly in these sections:
 3. **Adjustment Action**: Provide 1-2 highly specific recommendations for optimizing parameter values (e.g. SL/TP width, RSI thresholds, session parameters) based on this result.
 """
 
-        api_key = GEMINI_API_KEY or os.getenv("GOOGLE_API_KEY")
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or GEMINI_API_KEY
         if not api_key:
             return self._generate_fallback_report(trade_context, "GOOGLE_API_KEY is missing")
 
+        model_name = os.getenv("GEMINI_MODEL") or GEMINI_MODEL or "gemini-3.6-flash"
+
         try:
+            from utils.gemini_health import check_gemini_health
+            h = check_gemini_health(model_name=model_name, bot_name="Forex Bot")
+            if not h.get("healthy"):
+                return self._generate_fallback_report(trade_context, f"{h.get('status')}: {h.get('error')}")
+
             genai.configure(api_key=api_key)
-            model_name = GEMINI_MODEL or "gemini-flash-latest"
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
             return response.text
