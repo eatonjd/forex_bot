@@ -98,8 +98,8 @@ BOT_FIX_TIMELINE = [
     },
     {
         "date": "2026-09-02",
-        "title": "Phase 10: Automated Gemini 3.6 Flash Post-Trade Analyzer",
-        "description": "Integrated automated LLM post-trade analyzer. Every closed trade receives structured qualitative evaluation from Gemini 3.6 Flash, dispatched directly to Telegram.",
+        "title": "Phase 10: Automated Gemini 3.8 Flash Post-Trade Analyzer",
+        "description": "Integrated automated LLM post-trade analyzer. Every closed trade receives structured qualitative evaluation from Gemini 3.8 Flash, dispatched directly to Telegram.",
         "trigger_trade": "Automation of human trade post-mortems",
         "impact": "Zero manual review overhead, automated detection of execution anomalies",
         "icon": "🧠",
@@ -107,7 +107,7 @@ BOT_FIX_TIMELINE = [
     {
         "date": "2026-09-03",
         "title": "Phase 11: Real-Time Gemini In-Flight Position Copilot",
-        "description": "Implemented Gemini 3.6 Flash in-flight trade copilot (Requirement #2). Evaluates open OANDA trades aging > 2.5h or showing momentum rollover, dynamically tightening stops or executing early exits.",
+        "description": "Implemented Gemini 3.8 Flash in-flight trade copilot (Requirement #2). Evaluates open OANDA trades aging > 2.5h or showing momentum rollover, dynamically tightening stops or executing early exits.",
         "trigger_trade": "In-flight risk mitigation",
         "impact": "Active AI supervision protecting open capital in real time",
         "icon": "🤖",
@@ -846,7 +846,7 @@ def generate_journey_html(trades, start_balance=5000):
 
                     <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
                         <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 6: REAL-TIME AI COPILOT</div>
-                        <div style="font-size:1.4rem; font-weight:bold; color:#4ecdc4; margin: 4px 0;">Gemini 3.6</div>
+                        <div style="font-size:1.4rem; font-weight:bold; color:#4ecdc4; margin: 4px 0;">Gemini 3.8</div>
                         <div style="font-size:0.75rem; color:#aaa; margin-top:8px;">Status: ✅ IN-FLIGHT DEFENSE</div>
                     </div>
                 </div>

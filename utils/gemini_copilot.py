@@ -14,7 +14,7 @@ import google.generativeai as genai
 
 
 class ForexInFlightCopilot:
-    """Real-time in-flight position copilot powered by Gemini 3.6 Flash for Forex."""
+    """Real-time in-flight position copilot powered by Gemini 3.8 Flash for Forex."""
 
     def __init__(self, cooldown_minutes: int = 30):
         self.cooldown_seconds = cooldown_minutes * 60
@@ -22,7 +22,7 @@ class ForexInFlightCopilot:
 
         # Configure Gemini API
         self.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         try:
             from utils.gemini_health import check_gemini_health
             h = check_gemini_health(model_name=self.model_name, bot_name="Forex Bot")
@@ -96,7 +96,7 @@ class ForexInFlightCopilot:
         indicators: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Query Gemini 3.6 Flash for in-flight position guidance.
+        Query Gemini 3.8 Flash for in-flight position guidance.
         """
         self.last_evaluation_times[instrument] = time.time()
         indicators = indicators or {}

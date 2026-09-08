@@ -30,7 +30,7 @@ def check_gemini_health(
     Perform a pre-flight probe on the Gemini API key.
     
     Args:
-        model_name: Model identifier (defaults to GEMINI_MODEL env or gemini-3.6-flash)
+        model_name: Model identifier (defaults to GEMINI_MODEL env or gemini-3.8-flash)
         force: Force live check ignoring cache
         send_alert: Dispatches Telegram alert if check fails
         bot_name: Identifier for alert notifications
@@ -46,7 +46,7 @@ def check_gemini_health(
             return _HEALTH_CACHE["details"]
 
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    target_model = model_name or os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+    target_model = model_name or os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
     if not api_key:
         result = {

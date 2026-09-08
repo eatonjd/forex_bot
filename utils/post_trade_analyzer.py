@@ -354,7 +354,7 @@ Format your output exactly in these sections:
         if not api_key:
             return self._generate_fallback_report(trade_context, "GOOGLE_API_KEY is missing")
 
-        model_name = os.getenv("GEMINI_MODEL") or GEMINI_MODEL or "gemini-3.6-flash"
+        model_name = os.getenv("GEMINI_MODEL") or GEMINI_MODEL or "gemini-3.8-flash"
 
         try:
             from utils.gemini_health import check_gemini_health
