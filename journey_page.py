@@ -296,7 +296,7 @@ def get_trade_phase(trade_date_str):
         )
 
 
-def generate_journey_html(trades, start_balance=5000):
+def generate_journey_html(trades, start_balance=5000, view_mode="demo"):
     """Generate the enhanced journey HTML page"""
 
     # Calculate basic stats
@@ -748,7 +748,15 @@ def generate_journey_html(trades, start_balance=5000):
 
             <div class="header">
                 <h1>📈 Multi-Regime Forex Trading Journey</h1>
-                <p class="subtitle">Active Roster: USD_CAD, EUR_USD, AUD_USD • Primary Live OANDA CFD Account</p>
+                <p class="subtitle">Active Roster: USD_CAD, EUR_USD, AUD_USD • {"Primary Live OANDA CFD (001-001-20048243-002)" if view_mode == "live" else "Historical Demo Baseline (101-001-38009813-001)"}</p>
+                <div style="display:flex; justify-content:center; gap:10px; margin-top:14px;">
+                    <a href="/journey?view=demo" style="padding: 6px 14px; border-radius: 18px; text-decoration: none; font-weight: 600; font-size: 0.82rem; border: 1px solid {'#4ecdc4' if view_mode != 'live' else 'rgba(255,255,255,0.15)'}; background: {'rgba(78,205,196,0.18)' if view_mode != 'live' else 'rgba(255,255,255,0.04)'}; color: {'#4ecdc4' if view_mode != 'live' else '#888'};">
+                        📊 Demo Baseline (271 Trades &bull; $5,000)
+                    </a>
+                    <a href="/journey?view=live" style="padding: 6px 14px; border-radius: 18px; text-decoration: none; font-weight: 600; font-size: 0.82rem; border: 1px solid {'#ff6b6b' if view_mode == 'live' else 'rgba(255,255,255,0.15)'}; background: {'rgba(255,107,107,0.18)' if view_mode == 'live' else 'rgba(255,255,255,0.04)'}; color: {'#ff6b6b' if view_mode == 'live' else '#888'};">
+                        🔴 Live Account (81 Trades &bull; $308.48)
+                    </a>
+                </div>
             </div>
             
             <!-- Primary Stats -->

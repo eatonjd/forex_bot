@@ -694,28 +694,74 @@ def dashboard_old():
 @app.route("/journey")
 def journey():
     """Enhanced public trading journey page with phase tracking and trade details"""
+    from flask import request
     from oandapyV20 import API
     from oandapyV20.endpoints.trades import TradesList
     from journey_page import generate_journey_html
 
-    # Fetch trade history from OANDA
+    view = request.args.get("view", "demo").lower()
+    start_balance = 5000 if view != "live" else 308.48
     trades = []
-    try:
-        demo_key = os.getenv("OANDA_API_KEY") or os.getenv("OANDA_API_KEY_DEMO")
-        demo_id = os.getenv("OANDA_ACCOUNT_ID") or os.getenv("OANDA_ACCOUNT_ID_DEMO", "101-001-38009813-001")
+
+    # 1. Fetch Live trades if requested
+    if view == "live":
+        live_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
+        live_id = os.getenv("OANDA_ACCOUNT_ID_LIVE", "001-001-20048243-002")
+        if live_key and live_id:
+            try:
+                api = API(access_token=live_key, environment="live")
+                r = TradesList(accountID=live_id, params={"state": "ALL", "count": 500})
+                api.request(r)
+                trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
+            except Exception as e:
+                print(f"Journey live fetch error: {e}", flush=True)
+
+    # 2. Fetch Demo trades (default or fallback)
+    if not trades and view != "live":
+        demo_key = os.getenv("OANDA_API_KEY_DEMO")
+        demo_id = os.getenv("OANDA_ACCOUNT_ID_DEMO", "101-001-38009813-001")
         if demo_key and demo_id:
-            api = API(access_token=demo_key, environment="practice")
-            r = TradesList(
-                accountID=demo_id,
-                params={"instrument": "USD_JPY", "state": "ALL", "count": 500},
-            )
-            api.request(r)
-            trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
-    except Exception as e:
-        print(f"Journey error: {e}", flush=True)
+            try:
+                api = API(access_token=demo_key, environment="practice")
+                r = TradesList(accountID=demo_id, params={"state": "ALL", "count": 500})
+                api.request(r)
+                trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
+                start_balance = 5000
+                view = "demo"
+            except Exception as e:
+                print(f"Journey demo fetch error: {e}", flush=True)
+
+    # 3. Fallbacks if primary query returned 0 trades
+    if not trades:
+        if view == "live":
+            demo_key = os.getenv("OANDA_API_KEY_DEMO")
+            demo_id = os.getenv("OANDA_ACCOUNT_ID_DEMO", "101-001-38009813-001")
+            if demo_key and demo_id:
+                try:
+                    api = API(access_token=demo_key, environment="practice")
+                    r = TradesList(accountID=demo_id, params={"state": "ALL", "count": 500})
+                    api.request(r)
+                    trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
+                    start_balance = 5000
+                    view = "demo"
+                except Exception as e:
+                    print(f"Journey demo fallback error: {e}", flush=True)
+        else:
+            live_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
+            live_id = os.getenv("OANDA_ACCOUNT_ID_LIVE", "001-001-20048243-002")
+            if live_key and live_id:
+                try:
+                    api = API(access_token=live_key, environment="live")
+                    r = TradesList(accountID=live_id, params={"state": "ALL", "count": 500})
+                    api.request(r)
+                    trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
+                    start_balance = 308.48
+                    view = "live"
+                except Exception as e:
+                    print(f"Journey live fallback error: {e}", flush=True)
 
     # Generate enhanced HTML from journey_page module
-    html = generate_journey_html(trades, start_balance=5000)
+    html = generate_journey_html(trades, start_balance=start_balance, view_mode=view)
     return html
 
 
