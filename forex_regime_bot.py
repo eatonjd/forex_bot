@@ -374,7 +374,9 @@ class ForexRegimeBot:
         full_msg = f"{badge}\n\n{msg}" if not msg.startswith(badge) else msg
         if notifier:
             try:
-                notifier._send(full_msg, title=title or badge)
+                # Do NOT pass badge as title to avoid duplicate headers in TelegramNotifier
+                custom_title = title if (title and title != badge) else None
+                notifier._send(full_msg, title=custom_title)
             except Exception as e:
                 print(f"⚠️ Notification failed: {e}")
         print(f"📢 {full_msg}")
@@ -383,7 +385,10 @@ class ForexRegimeBot:
         """Send startup notification."""
         try:
             balance = self.get_account_balance()
-            balance_str = f"${balance:,.2f}" if balance > 0 else f"${self.simulated_balance:,.2f} (sim fallback)"
+            if self.mode == "live":
+                balance_str = f"${balance:,.2f}" if balance > 0 else "⚠️ Live API Error (Check Credentials)"
+            else:
+                balance_str = f"${balance:,.2f}" if balance > 0 else f"${self.simulated_balance:,.2f} (sim)"
             
             regimes = []
             for inst in self.instruments:
@@ -492,6 +497,9 @@ class ForexRegimeBot:
         """
         current_balance = cached_balance if cached_balance and cached_balance > 0 else self.get_account_balance()
         if current_balance <= 0:
+            if self.mode == "live":
+                print(f"🚨 CRITICAL [{instrument}]: Unable to verify live account balance ({current_balance}). Refusing to size trade for capital safety.", flush=True)
+                return 0
             current_balance = self.simulated_balance
             
         risk_amount = current_balance * self.risk_percent

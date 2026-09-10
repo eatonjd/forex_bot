@@ -420,6 +420,7 @@ def dashboard_old():
             live_api.request(live_r)
             live_acc = live_r.response["account"]
             live_data["balance"] = float(live_acc["balance"])
+            live_data["nav"] = float(live_acc.get("NAV", live_acc["balance"]))
             live_data["unrealized_pl"] = float(live_acc["unrealizedPL"])
 
             # Live trades
@@ -447,9 +448,11 @@ def dashboard_old():
         win_rate = 0
 
     losses = len(closed_trades) - wins
+    bot_mode = os.environ.get("BOT_MODE", "paper").lower()
+    is_live = (bot_mode == "live")
     start_balance = 5000
     # Total P/L from actual balance change (most accurate)
-    total_pl = demo_data["balance"] - start_balance
+    total_pl = (live_data["balance"] - start_balance) if (is_live and live_data["balance"] > 0) else (demo_data["balance"] - start_balance)
     pct_return = (total_pl / start_balance) * 100
 
     # Phase 4 Metrics (The 'Reset' clock)
@@ -581,16 +584,16 @@ def dashboard_old():
             
             <div class="cards">
                 <div class="card">
-                    <div class="card-label">Demo Balance</div>
-                    <div class="card-value">${demo_data["balance"]:,.2f}</div>
+                    <div class="card-label">{"Live Balance" if is_live else "Demo Balance"}</div>
+                    <div class="card-value">${(live_data["balance"] if is_live else demo_data["balance"]):,.2f}</div>
                 </div>
                 <div class="card">
-                    <div class="card-label">Total P/L</div>
-                    <div class="card-value {"positive" if total_pl >= 0 else "negative"}">${total_pl:+,.2f}</div>
+                    <div class="card-label">{"Live NAV" if is_live else "Total P/L"}</div>
+                    <div class="card-value {"positive" if (live_data.get("nav", 0) >= live_data["balance"] if is_live else total_pl >= 0) else "negative"}">${(live_data.get("nav", live_data["balance"]) if is_live else total_pl):,.2f}</div>
                 </div>
                 <div class="card">
-                    <div class="card-label">Return</div>
-                    <div class="card-value {"positive" if pct_return >= 0 else "negative"}">{pct_return:+.1f}%</div>
+                    <div class="card-label">{"Live Unrealized P/L" if is_live else "Return"}</div>
+                    <div class="card-value {"positive" if (live_data["unrealized_pl"] >= 0 if is_live else pct_return >= 0) else "negative"}">{(f"${live_data['unrealized_pl']:+,.2f}" if is_live else f"{pct_return:+.1f}%")}</div>
                 </div>
                 <div class="card">
                     <div class="card-label">Win Rate</div>
@@ -600,17 +603,19 @@ def dashboard_old():
             
             <div class="dual-account">
                 <div class="section">
-                    <div class="section-title">📊 Demo Status</div>
-                    <table>
-                        <tr><td>NAV</td><td>${demo_data["nav"]:,.2f}</td></tr>
-                        <tr><td>Unrealized P/L</td><td class="{"positive" if demo_data["unrealized_pl"] >= 0 else "negative"}">${demo_data["unrealized_pl"]:+,.2f}</td></tr>
-                    </table>
-                </div>
-                <div class="section">
                     <div class="section-title">💵 Live Status</div>
                     <table>
                         <tr><td>Balance</td><td>${live_data["balance"]:,.2f}</td></tr>
+                        <tr><td>NAV</td><td>${live_data.get("nav", live_data["balance"]):,.2f}</td></tr>
                         <tr><td>Unrealized P/L</td><td class="{"positive" if live_data["unrealized_pl"] >= 0 else "negative"}">${live_data["unrealized_pl"]:+,.2f}</td></tr>
+                    </table>
+                </div>
+                <div class="section">
+                    <div class="section-title">📊 Demo Status</div>
+                    <table>
+                        <tr><td>Balance</td><td>${demo_data["balance"]:,.2f}</td></tr>
+                        <tr><td>NAV</td><td>${demo_data["nav"]:,.2f}</td></tr>
+                        <tr><td>Unrealized P/L</td><td class="{"positive" if demo_data["unrealized_pl"] >= 0 else "negative"}">${demo_data["unrealized_pl"]:+,.2f}</td></tr>
                     </table>
                 </div>
             </div>
