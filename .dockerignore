@@ -7,6 +7,8 @@ __pycache__
 *.pyd
 .Python
 venv/
+forex_env/
+.venv/
 # env/  # REMOVED - this is our trading_env module, not a virtualenv!
 *.egg-info
 .eggs
