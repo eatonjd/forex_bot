@@ -19,6 +19,7 @@ import sys
 import time
 import json
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 import pytz
@@ -265,6 +266,7 @@ class ForexRegimeBot:
 
         # Logging
         self.logger = logging.getLogger("regime_bot")
+        self._analyzer_instance = None
         # Gemini In-Flight Copilot (Requirement #2)
         try:
             from utils.gemini_copilot import ForexInFlightCopilot
@@ -336,7 +338,11 @@ class ForexRegimeBot:
                 for inst, idata in state.get("instrument_state", {}).items():
                     if inst in self._instrument_state:
                         et = idata.get("entry_time")
-                        self._instrument_state[inst]["entry_time"] = datetime.fromisoformat(et) if et else None
+                        if et:
+                            dt = datetime.fromisoformat(et)
+                            self._instrument_state[inst]["entry_time"] = dt.replace(tzinfo=None) if dt.tzinfo else dt
+                        else:
+                            self._instrument_state[inst]["entry_time"] = None
                         self._instrument_state[inst]["trailing_active"] = idata.get("trailing_active", False)
                         self._instrument_state[inst]["peak_profit"] = idata.get("peak_profit", 0)
                         self._instrument_state[inst]["entry_regime"] = idata.get("entry_regime")
@@ -362,7 +368,26 @@ class ForexRegimeBot:
                 if pos_dir != 0:
                     d = "LONG" if pos_dir == 1 else "SHORT"
                     print(f"📍 [{inst}] {d} {pos_units:,}u @ {entry_price:.3f} | UPL: ${upl:+.2f}")
+                    # If entry_time not restored from state file, fetch actual open trade time from OANDA
+                    if self._instrument_state[inst]["entry_time"] is None:
+                        try:
+                            from oandapyV20.endpoints.trades import OpenTrades
+                            ot_req = OpenTrades(accountID=self.account_id)
+                            self.api.request(ot_req)
+                            for tr in ot_req.response.get("trades", []):
+                                if tr.get("instrument") == inst:
+                                    ot_str = tr.get("openTime", "")
+                                    if ot_str:
+                                        clean_ot = ot_str[:19]
+                                        self._instrument_state[inst]["entry_time"] = datetime.fromisoformat(clean_ot)
+                                        print(f"   🕒 Restored entry_time for [{inst}] from OANDA: {clean_ot}")
+                                    break
+                        except Exception as ot_err:
+                            print(f"   ⚠️ Could not fetch open trade time for {inst}: {ot_err}")
                 else:
+                    self._instrument_state[inst]["entry_time"] = None
+                    self._instrument_state[inst]["trailing_active"] = False
+                    self._instrument_state[inst]["peak_profit"] = 0
                     print(f"📍 [{inst}] Flat")
             except Exception as e:
                 print(f"⚠️ [{inst}] Sync error: {e}")
@@ -467,23 +492,28 @@ class ForexRegimeBot:
             params = {"instruments": instrument}
             r = PricingInfo(accountID=self.account_id, params=params)
             self.api.request(r)
-            if r.response["prices"]:
+            if r.response.get("prices"):
                 pd_ = r.response["prices"][0]
                 bid = float(pd_["bids"][0]["price"])
                 ask = float(pd_["asks"][0]["price"])
                 return round((ask - bid) / cfg["pip_size"], 2)
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️ [{instrument}] Failed to fetch spread: {e}")
         return None
 
     def _get_mid_price(self, instrument: str) -> float:
-        params = {"instruments": instrument}
-        r = PricingInfo(accountID=self.account_id, params=params)
-        self.api.request(r)
-        pd_ = r.response.get("prices", [{}])[0]
-        bid = float(pd_.get("bids", [{}])[0].get("price", 155.0))
-        ask = float(pd_.get("asks", [{}])[0].get("price", 155.0))
-        return (bid + ask) / 2
+        try:
+            params = {"instruments": instrument}
+            r = PricingInfo(accountID=self.account_id, params=params)
+            self.api.request(r)
+            pd_ = r.response.get("prices", [{}])[0]
+            bid = float(pd_.get("bids", [{}])[0].get("price", 0.0))
+            ask = float(pd_.get("asks", [{}])[0].get("price", 0.0))
+            if bid > 0 and ask > 0:
+                return (bid + ask) / 2
+        except Exception as e:
+            print(f"⚠️ [{instrument}] Failed to fetch mid price ({e}), using fallback")
+        return self.INSTRUMENT_PRICE_FALLBACKS.get(instrument, 1.0)
 
     # ─── Position Sizing ─────────────────────────────────────────
 
@@ -702,13 +732,17 @@ class ForexRegimeBot:
             except Exception as e:
                 print(f"⚠️ Log error: {e}")
 
-            # Trigger automatic post-trade AI commentary & analysis
-            try:
-                from utils.post_trade_analyzer import PostTradeAnalyzer
-                analyzer = PostTradeAnalyzer()
-                analyzer.analyze_new_trades(days=1)
-            except Exception as pta_err:
-                print(f"⚠️ Post-trade analysis error: {pta_err}")
+            # Trigger automatic post-trade AI commentary & analysis asynchronously
+            def _run_analyzer():
+                try:
+                    from utils.post_trade_analyzer import PostTradeAnalyzer
+                    if self._analyzer_instance is None:
+                        self._analyzer_instance = PostTradeAnalyzer()
+                    self._analyzer_instance.analyze_new_trades(days=1)
+                except Exception as pta_err:
+                    print(f"⚠️ Post-trade analysis error: {pta_err}")
+
+            threading.Thread(target=_run_analyzer, daemon=True).start()
 
             self.daily_pnl += pnl
             istate = self._instrument_state[instrument]
@@ -1063,10 +1097,14 @@ class ForexRegimeBot:
         if reason and signal != "HOLD":
             print(f"   💡 {reason}")
 
-        # Spread check
-        if spread and spread > max_spread and signal in ["BUY", "SELL"]:
-            print(f"   ⚠️ [{instrument}] SPREAD: {spread:.1f} > {max_spread:.1f}")
-            return
+        # Spread check (fail closed if spread cannot be verified)
+        if signal in ["BUY", "SELL"]:
+            if spread is None:
+                print(f"   ⚠️ [{instrument}] SPREAD: Unable to verify spread (API returned None) — skipping entry")
+                return
+            if spread > max_spread:
+                print(f"   ⚠️ [{instrument}] SPREAD: {spread:.1f} > {max_spread:.1f}")
+                return
 
         # Calculate volume anomaly ratio & ADX metric
         vol_ratio = 1.0

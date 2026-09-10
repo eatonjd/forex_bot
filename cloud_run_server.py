@@ -718,8 +718,8 @@ def journey():
 
     # 2. Fetch Demo trades (default or fallback)
     if not trades and view != "live":
-        demo_key = os.getenv("OANDA_API_KEY_DEMO")
-        demo_id = os.getenv("OANDA_ACCOUNT_ID_DEMO", "101-001-38009813-001")
+        demo_key = os.getenv("OANDA_API_KEY_DEMO") or os.getenv("OANDA_API_KEY")
+        demo_id = os.getenv("OANDA_ACCOUNT_ID_DEMO") or os.getenv("OANDA_ACCOUNT_ID", "101-001-38009813-001")
         if demo_key and demo_id:
             try:
                 api = API(access_token=demo_key, environment="practice")
@@ -734,8 +734,8 @@ def journey():
     # 3. Fallbacks if primary query returned 0 trades
     if not trades:
         if view == "live":
-            demo_key = os.getenv("OANDA_API_KEY_DEMO")
-            demo_id = os.getenv("OANDA_ACCOUNT_ID_DEMO", "101-001-38009813-001")
+            demo_key = os.getenv("OANDA_API_KEY_DEMO") or os.getenv("OANDA_API_KEY")
+            demo_id = os.getenv("OANDA_ACCOUNT_ID_DEMO") or os.getenv("OANDA_ACCOUNT_ID", "101-001-38009813-001")
             if demo_key and demo_id:
                 try:
                     api = API(access_token=demo_key, environment="practice")

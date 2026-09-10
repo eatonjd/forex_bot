@@ -65,14 +65,7 @@ ENABLE_MULTI_SYMBOL = False  # Enable multi-symbol trading (Phase 1.2)
 RAPID_FIRE_MODE = False  # High-frequency multi-symbol scanning
 MAX_TOTAL_POSITIONS = 10  # Maximum total open positions
 MAX_POSITIONS_PER_SYMBOL = 3  # Maximum positions per symbol
-SYMBOLS_TO_TRADE = ["EURUSD", "GBPUSD", "USDJPY"]  # Symbols for multi-symbol mode
 TIMEFRAMES_TO_CHECK = ["M5", "M15", "H1"]  # Timeframes for rapid-fire mode
-
-# ATR-Based Stops (from Bot-ForexMT5)
-USE_ATR_STOPS = False  # Enable ATR-based stop loss/take profit (Phase 1.3)
-ATR_PERIOD = 14  # Period for ATR calculation
-ATR_SL_MULTIPLIER = 1.5  # ATR multiplier for stop loss
-ATR_TP_MULTIPLIER = 2.0  # ATR multiplier for take profit
 
 # Advanced Position Management (from Bot-ForexMT5)
 AUTO_BREAKEVEN = False  # Auto-move SL to breakeven (Phase 4.1)
@@ -84,7 +77,6 @@ STEP_LOCK_INIT_USD = 0.3  # Initial profit to start trailing
 STEP_SIZE_USD = 0.1  # Step size for trailing
 
 # AI Analysis (from TradingBot_forex)
-ENABLE_GEMINI_ANALYSIS = False  # Enable Gemini AI analysis (Phase 2.1)
 ENABLE_VISUAL_ANALYSIS = False  # Enable chart image analysis
 ENABLE_SMC_ANALYSIS = False  # Smart Money Concepts (Phase 2.2)
 ENABLE_WYCKOFF_ANALYSIS = False  # Wyckoff Method (Phase 2.3)

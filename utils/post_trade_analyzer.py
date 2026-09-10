@@ -21,8 +21,12 @@ from utils.reward_engine import ForexRewardEngine
 
 from config import GEMINI_MODEL, GEMINI_API_KEY
 
-from dotenv import load_dotenv
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    if os.path.exists(".env"):
+        load_dotenv()
+except ImportError:
+    pass
 
 
 class PostTradeAnalyzer:
