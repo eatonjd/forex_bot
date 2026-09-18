@@ -42,8 +42,12 @@ class OANDAConnector:
             environment: 'practice' for demo, 'live' for real trading
             use_real_spreads: Override spreads with Alpha Vantage (default: from USE_REAL_SPREADS env)
         """
-        self.api_key = os.getenv("OANDA_API_KEY")
-        self.account_id = os.getenv("OANDA_ACCOUNT_ID")
+        if environment == "live":
+            self.api_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
+            self.account_id = os.getenv("OANDA_ACCOUNT_ID_LIVE") or os.getenv("OANDA_ACCOUNT_ID")
+        else:
+            self.api_key = os.getenv("OANDA_API_KEY_DEMO") or os.getenv("OANDA_API_KEY")
+            self.account_id = os.getenv("OANDA_ACCOUNT_ID_DEMO") or os.getenv("OANDA_ACCOUNT_ID")
         self.environment = environment
 
         if not self.api_key:

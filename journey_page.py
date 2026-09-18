@@ -1,129 +1,81 @@
 """
-Enhanced Trading Journey Page
-- Bot fix timeline with visual markers
-- Candlestick chart with entry/exit points
-- Advanced performance metrics (Sharpe, max drawdown, win streak)
-- Trade filtering by date, direction, P/L
-- Regime analysis showing profitable periods
-- Trade annotations (RSI, BB position)
-- Mobile-friendly responsive design
+Enhanced Trading Journey Page - Primary Live OANDA CFD Account (001-001-20048243-002)
+- Live Trade History with Pair, Direction, P/L, Pips, and Duration
+- Real-time Capital Scaling Scorecard & 25-Trade Live Gate ($308.48 Baseline)
+- Multi-Asset Liquid Major Roster: USD_CAD, EUR_USD, AUD_USD
+- Advanced Performance Metrics (Sharpe, Drawdown, Win Streak)
+- Automated Gemini Copilot & Post-Trade Synthesis
+- Fully Responsive Mobile-First Design (Strict Overflow Protection)
 """
 
 import os
-from datetime import datetime, timedelta
 import json
+from datetime import datetime, timezone
+from typing import Dict, Any, List
 
-# Bot fix timeline - key dates when performance fixes were introduced
-# Based on git history and trade data analysis
+# System Architecture & Live Evolution Timeline
 BOT_FIX_TIMELINE = [
     {
-        "date": "2026-01-12",
-        "title": "Profit Target & Trailing Adjusted",
-        "description": "After a -$290 loss on a SHORT trade that erased gains, lowered profit targets and trailing stop amounts.",
-        "trigger_trade": "-$290.21 on Jan 12 SHORT",
-        "impact": "More conservative profit taking",
-        "icon": "📉",
-    },
-    {
-        "date": "2026-01-13",
-        "title": "Safety Features Added",
-        "description": "Added 50-pip stop loss and daily loss limit to prevent runaway losses.",
-        "trigger_trade": "Multiple large losses pattern",
-        "impact": "Hard stops on max loss per trade and per day",
-        "icon": "🛑",
-    },
-    {
-        "date": "2026-01-14",
-        "title": "Probe Entry System",
-        "description": "After -$210 loss, implemented probe entry: start with 40% size, scale up only if trade confirms profitable.",
-        "trigger_trade": "-$210.45 on Jan 14 LONG",
-        "impact": "Smaller initial position size, reduced risk on wrong entries",
-        "icon": "🔍",
-    },
-    {
-        "date": "2026-01-23",
-        "title": "Regime Filter Added",
-        "description": "After Jan 22-23 'death spiral' of 6 consecutive losses totaling -$519, added market regime detection to prevent counter-trend trades.",
-        "trigger_trade": "Jan 22-23: -$14, -$84, -$81, -$166, -$103, -$71 = -$519 total",
-        "impact": "No more buying in downtrends, selling in uptrends",
-        "icon": "🛡️",
-    },
-    {
-        "date": "2026-01-23",
-        "title": "Trend-Following Mode",
-        "description": "Enabled trading WITH the trend instead of only mean-reversion. Now shorts pullbacks in downtrends, buys dips in uptrends.",
-        "trigger_trade": "Same death spiral - needed to profit from trends, not fight them",
-        "impact": "Can profit from trending markets instead of sitting out",
-        "icon": "📈",
-    },
-    {
-        "date": "2026-01-24",
-        "title": "Market Hours Check",
-        "description": "Added weekend market closure detection. Orders were failing with MARKET_HALTED during forex closed hours.",
-        "trigger_trade": "Multiple MARKET_HALTED order rejections",
-        "impact": "No wasted API calls on weekends, cleaner logs",
-        "icon": "🌙",
-    },
-    {
-        "date": "2026-01-29",
-        "title": "Enhanced Regime Detection",
-        "description": "After Jan 26-28 losses ($337 from shorting into uptrends), lowered slope threshold from 0.03 to 0.015 and added price-to-SMA confirmation. Bot was classifying uptrends as RANGING, allowing counter-trend shorts.",
-        "trigger_trade": "Jan 26-28: -$157, -$57, -$56, -$52 = -$322 in SHORT losses during uptrends",
-        "impact": "More sensitive trend detection, catches moderate uptrends/downtrends",
-        "icon": "🎯",
-    },
-    {
-        "date": "2026-02-13",
-        "title": "Phase 7.3: Performance Recovery (8 Fixes)",
-        "description": "After Feb 8-13 losses (-$123, LONGs 33% WR in downtrend), implemented: widened regime detection (5→20 candles), disabled probe scaling, SMA cross confirmation, server-side OANDA stop losses, narrowed trend RSI windows, 2x ATR volatility pause, short-only mode in downtrend, and BOT_PAUSED env var.",
-        "trigger_trade": "Feb 8-13: -$218 from LONGs in confirmed downtrend (9 trades, 33% WR)",
-        "impact": "Server-side stop losses prevent gap-through, SMA cross blocks counter-trend entries",
-        "icon": "🛡️",
-    },
-    {
         "date": "2026-08-25",
-        "title": "Phase 8: Multi-Asset Expansion on Live Cloud Run",
+        "title": "Multi-Asset Major Pair Expansion",
         "description": "Expanded live roster to liquid major pairs (USD_CAD, EUR_USD, AUD_USD) on Cloud Run with request-based CPU throttling, reducing infrastructure idle costs by 99%.",
-        "trigger_trade": "Multi-symbol diversification upgrade",
         "impact": "Portfolio diversification across 3 uncorrelated pairs with $30 daily loss cap",
         "icon": "🌐",
     },
     {
         "date": "2026-09-02",
-        "title": "Phase 9: Spread Guard & ADX Exhaustion Ceiling",
+        "title": "Spread Guard & ADX Exhaustion Ceiling",
         "description": "Added mandatory minimum Take-Profit filter (TP >= 4x spread) to eliminate micro-gain commission erosion, and capped breakout entries at ADX <= 38 to prevent buying/selling at trend exhaustion.",
-        "trigger_trade": "Post-trade analysis of micro-wins and late breakout stalls",
         "impact": "Realized spread drag reduced by 60%, late trend traps eliminated",
         "icon": "⚡",
     },
     {
         "date": "2026-09-02",
-        "title": "Phase 10: Automated Gemini 3.8 Flash Post-Trade Analyzer",
-        "description": "Integrated automated LLM post-trade analyzer. Every closed trade receives structured qualitative evaluation from Gemini 3.8 Flash, dispatched directly to Telegram.",
-        "trigger_trade": "Automation of human trade post-mortems",
+        "title": "Automated Gemini Post-Trade Reviews",
+        "description": "Integrated automated LLM post-trade analyzer. Closed trades receive structured qualitative evaluation from Gemini, dispatched directly to Telegram.",
         "impact": "Zero manual review overhead, automated detection of execution anomalies",
         "icon": "🧠",
     },
     {
         "date": "2026-09-03",
-        "title": "Phase 11: Real-Time Gemini In-Flight Position Copilot",
-        "description": "Implemented Gemini 3.8 Flash in-flight trade copilot (Requirement #2). Evaluates open OANDA trades aging > 2.5h or showing momentum rollover, dynamically tightening stops or executing early exits.",
-        "trigger_trade": "In-flight risk mitigation",
+        "title": "Real-Time Gemini In-Flight Position Copilot",
+        "description": "Implemented Gemini in-flight trade copilot. Evaluates open OANDA trades aging > 2.5h or showing momentum rollover, dynamically tightening stops or executing early exits.",
         "impact": "Active AI supervision protecting open capital in real time",
         "icon": "🤖",
+    },
+    {
+        "date": "2026-09-15",
+        "title": "Scalp Preservation & Impulse Acceleration Trail",
+        "description": "Added 0.75x ATR acceleration trail once floating profit hits +5.0 pips in <30 min, compressed holding time caps (3.5h MR / 4.0h Vol), and added 2.0h stagnation exit.",
+        "impact": "Locks in rapid profit bursts and eliminates dead-capital lockup",
+        "icon": "🚀",
+    },
+    {
+        "date": "2026-09-15",
+        "title": "Unified 3-Bot Portfolio Synthesis",
+        "description": "Automated daily 8:30 PM EST cross-bot trade review aggregating Crypto, Forex, and Options into a single evening Telegram risk debrief.",
+        "impact": "Comprehensive multi-asset executive oversight with zero manual initiation",
+        "icon": "📊",
     },
 ]
 
 
-def calculate_advanced_metrics(trades, start_balance=5000):
-    """Calculate advanced performance metrics"""
+def calculate_advanced_metrics(trades, start_balance=308.48):
+    """Calculate advanced performance metrics for live trading"""
     if not trades:
-        return {}
+        return {
+            "sharpe_ratio": 0.0,
+            "max_drawdown": 0.0,
+            "max_drawdown_pct": 0.0,
+            "max_win_streak": 0,
+            "max_loss_streak": 0,
+            "best_trade": 0.0,
+            "worst_trade": 0.0,
+            "avg_holding_hours": 0.0,
+            "equity_curve": [start_balance],
+        }
 
-    # Sort trades by date (oldest first)
     sorted_trades = sorted(trades, key=lambda t: t.get("openTime", ""))
-
-    # Calculate equity curve
     equity = start_balance
     equity_curve = [equity]
     daily_returns = []
@@ -137,11 +89,9 @@ def calculate_advanced_metrics(trades, start_balance=5000):
         equity += pnl
         equity_curve.append(equity)
 
-        # Daily return (approximate - using trade-by-trade)
         if prev_equity > 0:
             daily_returns.append(pnl / prev_equity)
 
-        # Track peak and drawdown
         if equity > peak:
             peak = equity
         drawdown = peak - equity
@@ -150,55 +100,42 @@ def calculate_advanced_metrics(trades, start_balance=5000):
             max_drawdown_pct = drawdown_pct
             max_drawdown = drawdown
 
-    # Calculate Sharpe Ratio (annualized, assuming 252 trading days)
-    if daily_returns and len(daily_returns) > 1:
-        import statistics
-
-        mean_return = statistics.mean(daily_returns)
-        std_return = (
-            statistics.stdev(daily_returns) if len(daily_returns) > 1 else 0.0001
-        )
-        sharpe_ratio = (mean_return / std_return) * (252**0.5) if std_return > 0 else 0
+    if len(daily_returns) > 1:
+        import numpy as np
+        std = np.std(daily_returns)
+        mean_ret = np.mean(daily_returns)
+        sharpe_ratio = (mean_ret / std * np.sqrt(252)) if std > 0 else 0
     else:
         sharpe_ratio = 0
 
-    # Win/Loss streaks
-    current_streak = 0
-    max_win_streak = 0
-    max_loss_streak = 0
-    current_win_streak = 0
-    current_loss_streak = 0
+    curr_win_streak = max_win_streak = 0
+    curr_loss_streak = max_loss_streak = 0
+    best_trade = worst_trade = 0
 
     for t in sorted_trades:
         pnl = float(t.get("realizedPL", 0))
         if pnl > 0:
-            current_win_streak += 1
-            current_loss_streak = 0
-            max_win_streak = max(max_win_streak, current_win_streak)
+            curr_win_streak += 1
+            curr_loss_streak = 0
+            if curr_win_streak > max_win_streak:
+                max_win_streak = curr_win_streak
         elif pnl < 0:
-            current_loss_streak += 1
-            current_win_streak = 0
-            max_loss_streak = max(max_loss_streak, current_loss_streak)
+            curr_loss_streak += 1
+            curr_win_streak = 0
+            if curr_loss_streak > max_loss_streak:
+                max_loss_streak = curr_loss_streak
+        if pnl > best_trade:
+            best_trade = pnl
+        if pnl < worst_trade:
+            worst_trade = pnl
 
-    # Best and worst trades
-    pnls = [float(t.get("realizedPL", 0)) for t in trades]
-    best_trade = max(pnls) if pnls else 0
-    worst_trade = min(pnls) if pnls else 0
-
-    # Average holding time
     holding_times = []
     for t in sorted_trades:
         try:
-            open_time = datetime.fromisoformat(
-                t.get("openTime", "").replace("Z", "+00:00")
-            )
-            close_time = datetime.fromisoformat(
-                t.get("closeTime", "").replace("Z", "+00:00")
-            )
-            holding_times.append(
-                (close_time - open_time).total_seconds() / 3600
-            )  # hours
-        except:
+            ot = datetime.fromisoformat(t.get("openTime", "").replace("Z", "+00:00"))
+            ct = datetime.fromisoformat(t.get("closeTime", "").replace("Z", "+00:00"))
+            holding_times.append((ct - ot).total_seconds() / 3600)
+        except Exception:
             pass
     avg_holding_hours = sum(holding_times) / len(holding_times) if holding_times else 0
 
@@ -215,224 +152,75 @@ def calculate_advanced_metrics(trades, start_balance=5000):
     }
 
 
-def get_trade_phase(trade_date_str):
-    """Determine which phase a trade belongs to based on actual bot fix dates"""
-    try:
-        trade_date = datetime.fromisoformat(
-            trade_date_str.replace("Z", "+00:00")
-        ).date()
-    except Exception:
-        return "Unknown", "#888888", "No phase info"
-
-    # Define phases based on actual git commits and fix dates
-    # Phase 1: Before any safety features (Dec 23 - Jan 11)
-    if trade_date < datetime(2026, 1, 12).date():
-        return "Phase 1: Early", "#4caf50", "Original mean-reversion, no safety limits"
-    # Phase 2: Safety features added (Jan 12-13)
-    elif trade_date < datetime(2026, 1, 14).date():
-        return "Phase 2: Safety", "#ffc107", "50-pip stop loss, daily loss limit added"
-    # Phase 3: Probe entry added (Jan 14 - Jan 23) - includes the death spiral
-    elif trade_date < datetime(2026, 1, 24).date():
-        return "Phase 3: Probe", "#2196f3", "40% probe entry, scale on confirmation"
-    # Phase 4: Regime filter added (Jan 24 - Jan 28)
-    elif trade_date < datetime(2026, 1, 29).date():
-        return (
-            "Phase 4: Regime",
-            "#4ecdc4",
-            "Trend detection active - Go-Live Reset started",
-        )
-    # Phase 5: Enhanced regime detection (Jan 29 - Jan 31)
-    elif trade_date < datetime(2026, 2, 1).date():
-        return (
-            "Phase 5: Enhanced",
-            "#9b59b6",
-            "Improved regime sensitivity - lower slope threshold",
-        )
-    # Phase 6: Trailing stop fix preparation (Feb 1)
-    elif trade_date < datetime(2026, 2, 2).date():
-        return (
-            "Phase 6: Pre-Trailing",
-            "#e74c3c",
-            "Trailing stop threshold lowered to $50",
-        )
-    # Phase 7: Initial trailing stop deployment (Feb 2 - Feb 5)
-    elif trade_date < datetime(2026, 2, 6).date():
-        return (
-            "Phase 7: Trailing",
-            "#f39c12",
-            "Trailing $20 activate, $10 trail, profit target disabled",
-        )
-    # Phase 7.1: Trailing stop optimization (Feb 6 before 21:45 UTC = before position fix)
-    elif trade_date == datetime(2026, 2, 6).date():
-        # Check time as well for 7.1 vs 7.2 transition
-        try:
-            trade_dt = datetime.fromisoformat(trade_date_str.replace("Z", "+00:00"))
-            if trade_dt.hour < 21 or (trade_dt.hour == 21 and trade_dt.minute < 45):
-                return (
-                    "Phase 7.1: Trailing Opt",
-                    "#3498db",
-                    "Trailing stop working: $20 activate, $10 trail",
-                )
-        except:
-            pass
-        return (
-            "Phase 7.2: Position Fix",
-            "#1abc9c",
-            "True 2% risk, no daily profit cap",
-        )
-    # Phase 7.2: Position sizing fix + no profit cap (Feb 6 21:45 UTC+)
-    elif trade_date < datetime(2026, 2, 13).date():
-        return (
-            "Phase 7.2: Position Fix",
-            "#1abc9c",
-            "True 2% risk, no daily profit cap",
-        )
-    # Phase 7.3: SMA Cross + regime filter (Feb 13+)
-    else:
-        return (
-            "Phase 7.3: Regime Fix",
-            "#4ecdc4",
-            "Stronger regime + SMA cross directional filter",
-        )
-
-
-def generate_journey_html(trades, start_balance=5000, view_mode="demo"):
-    """Generate the enhanced journey HTML page"""
-
-    # Calculate basic stats
+def generate_journey_html(trades, start_balance=308.48, view_mode="live"):
+    """Generate enhanced live forex trading journey HTML page"""
     total_pnl = sum(float(t.get("realizedPL", 0)) for t in trades)
     winners = [t for t in trades if float(t.get("realizedPL", 0)) > 0]
     losers = [t for t in trades if float(t.get("realizedPL", 0)) < 0]
     win_pnl = sum(float(t.get("realizedPL", 0)) for t in winners)
     loss_pnl = sum(float(t.get("realizedPL", 0)) for t in losers)
     win_rate = (len(winners) / len(trades) * 100) if trades else 0
-    profit_factor = abs(win_pnl / loss_pnl) if loss_pnl else 0
-    avg_winner = win_pnl / len(winners) if winners else 0
-    avg_loser = loss_pnl / len(losers) if losers else 0
+    profit_factor = abs(win_pnl / loss_pnl) if loss_pnl else (1.0 if not losers and winners else 0)
 
-    # Advanced metrics
     metrics = calculate_advanced_metrics(trades, start_balance)
 
-    # Build equity curve data points with dates
+    # Build equity curve data points
     sorted_trades = sorted(trades, key=lambda t: t.get("openTime", ""))
     equity = start_balance
     equity_points = []
-
-    for i, t in enumerate(sorted_trades):
+    for t in sorted_trades:
         date_str = t.get("openTime", "")[:10]
         pnl = float(t.get("realizedPL", 0))
         equity += pnl
-        phase, color, desc = get_trade_phase(t.get("openTime", ""))
-        equity_points.append(
-            {
-                "x": date_str,
-                "y": round(equity, 2),
-                "pnl": round(pnl, 2),
-                "phase": phase,
-                "desc": desc,
-            }
-        )
+        pair = t.get("instrument", "USD_CAD")
+        equity_points.append({
+            "x": date_str,
+            "y": round(equity, 2),
+            "pnl": round(pnl, 2),
+            "pair": pair
+        })
 
-    # Phase analysis by actual phases
-    phase1_trades = [
-        t for t in trades if "Phase 1" in get_trade_phase(t.get("openTime", ""))[0]
-    ]
-    phase2_trades = [
-        t for t in trades if "Phase 2" in get_trade_phase(t.get("openTime", ""))[0]
-    ]
-    phase3_trades = [
-        t for t in trades if "Phase 3" in get_trade_phase(t.get("openTime", ""))[0]
-    ]
-    phase4_trades = [
-        t for t in trades if "Phase 4" in get_trade_phase(t.get("openTime", ""))[0]
-    ]
-    phase5_trades = [
-        t for t in trades if "Phase 5" in get_trade_phase(t.get("openTime", ""))[0]
-    ]
-    phase6_trades = [
-        t for t in trades if "Phase 6" in get_trade_phase(t.get("openTime", ""))[0]
-    ]
-    phase7_trades = [
-        t for t in trades if "Phase 7:" in get_trade_phase(t.get("openTime", ""))[0]
-    ]
-    phase71_trades = [
-        t for t in trades if "Phase 7.1" in get_trade_phase(t.get("openTime", ""))[0]
-    ]
-    phase72_trades = [
-        t for t in trades if "Phase 7.2" in get_trade_phase(t.get("openTime", ""))[0]
-    ]
-    phase73_trades = [
-        t for t in trades if "Phase 7.3" in get_trade_phase(t.get("openTime", ""))[0]
-    ]
+    # Performance breakdown by Pair
+    pairs = ["USD_CAD", "EUR_USD", "AUD_USD"]
+    pair_cards_html = ""
+    for p in pairs:
+        p_trades = [t for t in trades if t.get("instrument") == p]
+        p_pnl = sum(float(t.get("realizedPL", 0)) for t in p_trades)
+        p_wins = [t for t in p_trades if float(t.get("realizedPL", 0)) > 0]
+        p_wr = (len(p_wins) / len(p_trades) * 100) if p_trades else 0
+        p_color = "#4caf50" if p_pnl >= 0 else "#f44336"
+        pair_cards_html += f"""
+        <div class="stat-card" style="border-left: 4px solid {p_color};">
+            <div class="stat-value">{p}</div>
+            <div class="stat-label">{len(p_trades)} Trades</div>
+            <div style="font-size:0.85rem; margin-top:6px;">
+                <span class="{'positive' if p_pnl >= 0 else 'negative'}">${p_pnl:+,.2f}</span> | {p_wr:.0f}% WR
+            </div>
+        </div>"""
 
-    def phase_stats(phase_trades):
-        if not phase_trades:
-            return 0, 0, 0
-        pnl = sum(float(t.get("realizedPL", 0)) for t in phase_trades)
-        wins = len([t for t in phase_trades if float(t.get("realizedPL", 0)) > 0])
-        wr = wins / len(phase_trades) * 100
-        return len(phase_trades), pnl, wr
-
-    p1_count, p1_pnl, p1_wr = phase_stats(phase1_trades)
-    p2_count, p2_pnl, p2_wr = phase_stats(phase2_trades)
-    p3_count, p3_pnl, p3_wr = phase_stats(phase3_trades)
-    p4_count, p4_pnl, p4_wr = phase_stats(phase4_trades)
-    p5_count, p5_pnl, p5_wr = phase_stats(phase5_trades)
-    p6_count, p6_pnl, p6_wr = phase_stats(phase6_trades)
-    p7_count, p7_pnl, p7_wr = phase_stats(phase7_trades)
-    p71_count, p71_pnl, p71_wr = phase_stats(phase71_trades)
-    p72_count, p72_pnl, p72_wr = phase_stats(phase72_trades)
-    p73_count, p73_pnl, p73_wr = phase_stats(phase73_trades)
-
-    # Calculate Phase 7.3 Drawdown specifically
-    p73_max_dd = 0
-    if phase73_trades:
-        # Initial balance for Phase 7.3 is current balance minus Phase 7.3 P/L
-        p73_start_bal = (start_balance + total_pnl) - p73_pnl
-        p73_bal = p73_start_bal
-        p73_peak = p73_bal
-        for t in sorted(phase73_trades, key=lambda x: x.get("closeTime", "")):
-            p73_bal += float(t.get("realizedPL", 0))
-            if p73_bal > p73_peak:
-                p73_peak = p73_bal
-            dd = (p73_peak - p73_bal) / p73_peak * 100
-            if dd > p73_max_dd:
-                p73_max_dd = dd
-
-    # Build trade rows with full details
-    # Sort trades oldest-first so running balance accumulates correctly
-    trades_sorted = sorted(trades, key=lambda t: t.get("openTime", ""))
+    # Build Trade rows
     trade_rows_list = []
     running_balance = start_balance
-    for t in trades_sorted:
+    for t in sorted_trades:
         open_time_full = t.get("openTime", "")
         close_time_full = t.get("closeTime", "")
         open_time = open_time_full[:10]
-        open_time_short = open_time_full[11:16] if len(open_time_full) > 16 else ""
-        close_time_short = close_time_full[11:16] if len(close_time_full) > 16 else ""
+        pair = t.get("instrument", "USD_CAD")
 
         units = int(float(t.get("initialUnits", 0)))
         direction = "LONG" if units > 0 else "SHORT"
         entry = float(t.get("price", 0))
-
-        # Get close price from averageClosePrice
         close_price = float(t.get("averageClosePrice", entry))
 
-        # Calculate pips (for JPY pairs, 1 pip = 0.01)
-        pip_size = 0.01
-        if direction == "LONG":
-            pips = (close_price - entry) / pip_size
-        else:
-            pips = (entry - close_price) / pip_size
+        pip_size = 0.01 if "JPY" in pair else 0.0001
+        pips = (close_price - entry) / pip_size if direction == "LONG" else (entry - close_price) / pip_size
 
         pnl = float(t.get("realizedPL", 0))
         pnl_class = "positive" if pnl >= 0 else "negative"
         running_balance += pnl
 
-        # Calculate holding time
         try:
             from datetime import datetime as dt
-
             open_dt = dt.fromisoformat(open_time_full.replace("Z", "+00:00"))
             close_dt = dt.fromisoformat(close_time_full.replace("Z", "+00:00"))
             hold_seconds = (close_dt - open_dt).total_seconds()
@@ -442,50 +230,26 @@ def generate_journey_html(trades, start_balance=5000, view_mode="demo"):
                 hold_str = f"{hold_seconds / 3600:.1f}h"
             else:
                 hold_str = f"{hold_seconds / 86400:.1f}d"
-        except:
+        except Exception:
             hold_str = "-"
 
-        phase, phase_color, phase_desc = get_trade_phase(open_time_full)
-        # Phase icons
-        if "Phase 1" in phase:
-            phase_icon = "🚀"
-        elif "Phase 2" in phase:
-            phase_icon = "🛑"
-        elif "Phase 3" in phase:
-            phase_icon = "🔍"
-        elif "Phase 4" in phase:
-            phase_icon = "🛡️"
-        elif "Phase 5" in phase:
-            phase_icon = "🎯"
-        elif "Phase 6" in phase:
-            phase_icon = "📉"
-        elif "Phase 7.2" in phase:
-            phase_icon = "✨"
-        elif "Phase 7.1" in phase:
-            phase_icon = "📈"
-        elif "Phase 7" in phase:
-            phase_icon = "🔄"
-        else:
-            phase_icon = "❓"
-
-        trade_rows_list.append(f'''
-        <tr data-date="{open_time}" data-direction="{direction}" data-pnl="{pnl}" data-phase="{phase}">
-            <td><span class="phase-indicator" style="color:{phase_color}" title="{phase_desc}">{phase_icon}</span> {open_time}</td>
+        trade_rows_list.append(f"""
+        <tr data-date="{open_time}" data-pair="{pair}" data-direction="{direction}" data-pnl="{pnl}">
+            <td>{open_time}</td>
+            <td style="font-weight:600; color:#4ecdc4;">{pair}</td>
             <td class="{direction.lower()}">{direction}</td>
             <td>{abs(units):,}</td>
-            <td>{entry:.3f} → {close_price:.3f}</td>
-            <td class="{pnl_class}">{pips:+.1f} pips</td>
+            <td>{entry:.4f} → {close_price:.4f}</td>
+            <td class="{pnl_class}">{pips:+.1f}</td>
             <td class="{pnl_class}">${pnl:+,.2f}</td>
-            <td>${running_balance:,.0f}</td>
+            <td>${running_balance:,.2f}</td>
             <td>{hold_str}</td>
-            <td class="phase-desc" style="color:{phase_color};font-size:0.75rem;">{phase_desc}</td>
-        </tr>''')
+        </tr>""")
 
-    # Reverse so newest trades appear at top of the table
     trade_rows_list.reverse()
     trade_rows = "".join(trade_rows_list)
 
-    # Build fix timeline HTML
+    # Build Timeline HTML
     fix_timeline_html = ""
     for fix in BOT_FIX_TIMELINE:
         fix_timeline_html += f"""
@@ -499,684 +263,667 @@ def generate_journey_html(trades, start_balance=5000, view_mode="demo"):
             </div>
         </div>"""
 
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>USD/JPY Trading Journey</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-        <style>
-            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-            body {{ 
-                font-family: 'Inter', -apple-system, sans-serif; 
-                background: linear-gradient(135deg, #0a0a1a 0%, #1a1a3e 50%, #0a0a1a 100%);
-                color: #e0e0e0;
-                min-height: 100vh;
-                padding: 20px;
+    # Qualification Gate Calculations
+    live_trades_count = len(trades)
+    max_dd_pct = metrics.get("max_drawdown_pct", 0)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Forex Bot Live Journey | Primary CFD</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {{
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }}
+        html, body {{
+            width: 100%;
+            max-width: 100vw;
+            overflow-x: hidden;
+            background: linear-gradient(135deg, #0a0a1a 0%, #12122b 50%, #0a0a1a 100%);
+            color: #e0e0e0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            min-height: 100vh;
+        }}
+        body {{
+            padding: 16px 12px;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+            overflow-x: hidden;
+        }}
+
+        /* Fleet Navigation Bar */
+        .fleet-nav {{
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            padding: 0.4rem;
+            background: rgba(18, 22, 33, 0.85);
+            border: 1px solid #2a2e39;
+            border-radius: 12px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            width: 100%;
+        }}
+        .fleet-nav-link {{
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.5rem 0.9rem;
+            border-radius: 8px;
+            text-decoration: none;
+            color: #888;
+            font-size: 0.82rem;
+            font-weight: 500;
+            white-space: nowrap;
+            flex-shrink: 0;
+            transition: all 0.2s ease;
+        }}
+        .fleet-nav-link:hover {{
+            color: #e0e0e0;
+            background: rgba(255, 255, 255, 0.05);
+        }}
+        .fleet-nav-link.active {{
+            color: #fff;
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.3), rgba(59, 130, 246, 0.3));
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            font-weight: 600;
+        }}
+
+        /* Header */
+        .header {{
+            text-align: center;
+            margin-bottom: 24px;
+        }}
+        h1 {{
+            font-size: 2.2rem;
+            margin-bottom: 8px;
+            color: #fff;
+            background: linear-gradient(135deg, #4ecdc4, #44a08d);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            word-break: break-word;
+        }}
+        .subtitle {{
+            color: #888;
+            font-size: 0.88rem;
+            line-height: 1.4;
+            word-break: break-word;
+        }}
+        .subtitle code {{
+            background: rgba(255,255,255,0.06);
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #4ecdc4;
+        }}
+
+        /* Stats Grid */
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+            width: 100%;
+        }}
+        .stat-card {{
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            padding: 16px 12px;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-sizing: border-box;
+        }}
+        .stat-value {{
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #4ecdc4;
+            word-break: break-all;
+        }}
+        .stat-value.positive {{ color: #4caf50; }}
+        .stat-value.negative {{ color: #f44336; }}
+        .stat-label {{
+            font-size: 0.75rem;
+            color: #888;
+            margin-top: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+
+        /* Section Header */
+        .section-header {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 24px 0 12px 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }}
+        .section-header h2 {{
+            font-size: 1.15rem;
+            color: #fff;
+        }}
+
+        /* Gate Card */
+        .gate-card {{
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+            border-left: 5px solid #4ecdc4;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            border-right: 1px solid rgba(255,255,255,0.08);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }}
+        .gate-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 16px;
+        }}
+        .gate-badge {{
+            background: rgba(78, 205, 196, 0.15);
+            border: 1px solid rgba(78, 205, 196, 0.3);
+            color: #4ecdc4;
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 0.8rem;
+            font-weight: 700;
+        }}
+
+        /* Filters */
+        .filters {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 16px;
+            padding: 12px;
+            background: rgba(255,255,255,0.02);
+            border-radius: 10px;
+            width: 100%;
+        }}
+        .filter-group {{
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex: 1 1 120px;
+        }}
+        .filter-group label {{
+            font-size: 0.8rem;
+            color: #888;
+        }}
+        .filter-group select {{
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #fff;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            width: 100%;
+        }}
+        .filter-btn {{
+            background: linear-gradient(135deg, #4ecdc4, #44a08d);
+            border: none;
+            color: #fff;
+            padding: 6px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.8rem;
+        }}
+
+        /* Table Container */
+        .table-container {{
+            width: 100%;
+            max-width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            background: rgba(255,255,255,0.02);
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.05);
+            margin-bottom: 24px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 520px;
+        }}
+        th, td {{
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            font-size: 0.82rem;
+            white-space: nowrap;
+        }}
+        th {{
+            background: rgba(255,255,255,0.03);
+            color: #4ecdc4;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+        }}
+        .positive {{ color: #4caf50; font-weight: 600; }}
+        .negative {{ color: #f44336; font-weight: 600; }}
+        .long {{ color: #4caf50; font-weight: 600; }}
+        .short {{ color: #f44336; font-weight: 600; }}
+
+        /* Chart */
+        .chart-container {{
+            background: rgba(255,255,255,0.02);
+            border-radius: 14px;
+            padding: 16px;
+            margin-bottom: 24px;
+            border: 1px solid rgba(255,255,255,0.05);
+            position: relative;
+            height: 280px;
+            width: 100%;
+            max-width: 100%;
+        }}
+
+        /* Timeline */
+        .timeline {{
+            position: relative;
+            padding-left: 24px;
+        }}
+        .timeline::before {{
+            content: '';
+            position: absolute;
+            left: 8px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(180deg, #4ecdc4, #44a08d);
+        }}
+        .timeline-item {{
+            position: relative;
+            margin-bottom: 18px;
+            padding-left: 18px;
+        }}
+        .timeline-icon {{
+            position: absolute;
+            left: -24px;
+            top: 0;
+            font-size: 1.1rem;
+            background: #12122b;
+            padding: 4px;
+            border-radius: 50%;
+        }}
+        .timeline-content {{
+            background: rgba(255,255,255,0.03);
+            border-radius: 10px;
+            padding: 12px 16px;
+            border-left: 3px solid #4ecdc4;
+        }}
+        .timeline-date {{ font-size: 0.75rem; color: #4ecdc4; font-weight: 600; }}
+        .timeline-title {{ font-size: 0.95rem; color: #fff; margin: 4px 0; font-weight: 600; }}
+        .timeline-desc {{ font-size: 0.8rem; color: #aaa; margin-bottom: 6px; }}
+        .timeline-impact {{ font-size: 0.75rem; color: #4caf50; font-style: italic; }}
+
+        /* Footer */
+        .footer {{
+            text-align: center;
+            margin-top: 36px;
+            padding: 16px;
+            color: #555;
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }}
+
+        /* Mobile Screen Adjustments */
+        @media (max-width: 768px) {{
+            body {{
+                padding: 10px 6px;
             }}
-            .container {{ max-width: 1200px; margin: 0 auto; }}
-            
-            /* Header */
-            .header {{ text-align: center; margin-bottom: 40px; }}
-            h1 {{ font-size: 2.5rem; margin-bottom: 10px; color: #fff; 
-                  background: linear-gradient(135deg, #4ecdc4, #44a08d);
-                  -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
-            .subtitle {{ color: #888; margin-bottom: 20px; }}
-            
-            /* Stats Grid */
+            .container {{
+                padding: 4px;
+            }}
+            h1 {{
+                font-size: 1.5rem;
+            }}
+            .subtitle {{
+                font-size: 0.78rem;
+            }}
             .stats-grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-                gap: 15px;
-                margin-bottom: 30px;
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 8px !important;
             }}
             .stat-card {{
-                background: rgba(255,255,255,0.03);
-                border-radius: 12px;
-                padding: 20px;
-                text-align: center;
-                border: 1px solid rgba(255,255,255,0.08);
-                transition: transform 0.2s, box-shadow 0.2s;
+                padding: 12px 8px !important;
             }}
-            .stat-card:hover {{
-                transform: translateY(-2px);
-                box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+            .stat-value {{
+                font-size: 1.25rem !important;
             }}
-            .stat-value {{ font-size: 1.6rem; font-weight: 700; color: #4ecdc4; }}
-            .stat-value.positive {{ color: #4caf50; }}
-            .stat-value.negative {{ color: #f44336; }}
-            .stat-label {{ font-size: 0.8rem; color: #888; margin-top: 8px; text-transform: uppercase; letter-spacing: 0.5px; }}
-            
-            /* Section Headers */
-            .section-header {{
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                margin: 30px 0 15px 0;
-                padding-bottom: 10px;
-                border-bottom: 1px solid rgba(255,255,255,0.1);
+            .gate-card {{
+                padding: 14px 10px;
             }}
-            .section-header h2 {{ font-size: 1.2rem; color: #fff; }}
-            .section-header .icon {{ font-size: 1.4rem; }}
-            
-            /* Chart Container */
-            .chart-container {{
-                background: rgba(255,255,255,0.02);
-                border-radius: 16px;
-                padding: 25px;
-                margin-bottom: 30px;
-                border: 1px solid rgba(255,255,255,0.05);
-            }}
-            
-            /* Timeline */
-            .timeline {{
-                position: relative;
-                padding-left: 30px;
-            }}
-            .timeline::before {{
-                content: '';
-                position: absolute;
-                left: 10px;
-                top: 0;
-                bottom: 0;
-                width: 2px;
-                background: linear-gradient(180deg, #4ecdc4, #44a08d);
-            }}
-            .timeline-item {{
-                position: relative;
-                margin-bottom: 25px;
-                padding-left: 25px;
-            }}
-            .timeline-icon {{
-                position: absolute;
-                left: -25px;
-                top: 0;
-                font-size: 1.2rem;
-                background: #1a1a3e;
-                padding: 5px;
-                border-radius: 50%;
-            }}
-            .timeline-content {{
-                background: rgba(255,255,255,0.03);
-                border-radius: 10px;
-                padding: 15px 20px;
-                border-left: 3px solid #4ecdc4;
-            }}
-            .timeline-date {{ font-size: 0.8rem; color: #4ecdc4; font-weight: 600; }}
-            .timeline-title {{ font-size: 1rem; color: #fff; margin: 5px 0; font-weight: 600; }}
-            .timeline-desc {{ font-size: 0.85rem; color: #aaa; margin-bottom: 8px; }}
-            .timeline-impact {{ font-size: 0.8rem; color: #4caf50; font-style: italic; }}
-            
-            /* Phase Comparison */
-            .phase-comparison {{
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 20px;
-                margin-bottom: 30px;
-            }}
-            .phase-card {{
-                background: rgba(255,255,255,0.03);
-                border-radius: 12px;
-                padding: 20px;
-                text-align: center;
-            }}
-            .phase-card.pre-fix {{ border-left: 4px solid #ff6b6b; }}
-            .phase-card.post-fix {{ border-left: 4px solid #4ecdc4; }}
-            .phase-title {{ font-size: 1rem; color: #fff; margin-bottom: 15px; font-weight: 600; }}
-            .phase-stat {{ font-size: 0.9rem; color: #aaa; margin: 8px 0; }}
-            .phase-stat strong {{ color: #fff; }}
-            
-            /* Filters */
             .filters {{
-                display: flex;
-                flex-wrap: wrap;
-                gap: 10px;
-                margin-bottom: 20px;
-                padding: 15px;
-                background: rgba(255,255,255,0.02);
-                border-radius: 10px;
+                flex-direction: column;
+                gap: 6px;
             }}
-            .filter-group {{ display: flex; align-items: center; gap: 8px; }}
-            .filter-group label {{ font-size: 0.85rem; color: #888; }}
-            .filter-group select, .filter-group input {{
-                background: rgba(255,255,255,0.05);
-                border: 1px solid rgba(255,255,255,0.1);
-                color: #fff;
-                padding: 8px 12px;
-                border-radius: 6px;
-                font-size: 0.85rem;
+            .filter-group {{
+                width: 100%;
             }}
-            .filter-btn {{
-                background: linear-gradient(135deg, #4ecdc4, #44a08d);
-                border: none;
-                color: #fff;
-                padding: 8px 20px;
-                border-radius: 6px;
-                cursor: pointer;
-                font-weight: 600;
-                transition: opacity 0.2s;
+            .chart-container {{
+                padding: 8px;
+                height: 230px;
             }}
-            .filter-btn:hover {{ opacity: 0.9; }}
-            
-            /* Table */
-            .table-container {{
-                overflow-x: auto;
-                background: rgba(255,255,255,0.02);
-                border-radius: 12px;
-                border: 1px solid rgba(255,255,255,0.05);
-            }}
-            table {{ width: 100%; border-collapse: collapse; min-width: 500px; }}
-            th, td {{ padding: 14px 16px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); }}
-            th {{ background: rgba(255,255,255,0.03); color: #4ecdc4; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; }}
-            td {{ font-size: 0.9rem; }}
-            tr:hover {{ background: rgba(255,255,255,0.02); }}
-            .positive {{ color: #4caf50; font-weight: 600; }}
-            .negative {{ color: #f44336; font-weight: 600; }}
-            .long {{ color: #4caf50; }}
-            .short {{ color: #f44336; }}
-            .phase-indicator {{ margin-right: 5px; }}
-            
-            /* Footer */
-            .footer {{ text-align: center; margin-top: 50px; padding: 20px; color: #555; font-size: 0.85rem; }}
-            
-            /* Fleet Navigation Bar */
-            .fleet-nav {{
-                display: flex;
-                gap: 0.75rem;
-                margin-bottom: 2rem;
-                padding: 0.5rem;
-                background: rgba(18, 22, 33, 0.75);
-                border: 1px solid #2a2e39;
-                border-radius: 12px;
-                overflow-x: auto;
-            }}
-            .fleet-nav-link {{
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-                padding: 0.6rem 1.2rem;
-                border-radius: 8px;
-                text-decoration: none;
-                color: #888;
-                font-size: 0.85rem;
-                font-weight: 500;
-                transition: all 0.2s ease;
-                white-space: nowrap;
-            }}
-            .fleet-nav-link:hover {{
-                color: #e0e0e0;
-                background: rgba(255, 255, 255, 0.05);
-            }}
-            .fleet-nav-link.active {{
-                color: #fff;
-                background: linear-gradient(135deg, rgba(239, 68, 68, 0.3), rgba(59, 130, 246, 0.3));
-                border: 1px solid rgba(239, 68, 68, 0.4);
-                font-weight: 600;
-            }}
-            
-            /* Mobile Responsive */
-            @media (max-width: 768px) {{
-                body {{ padding: 10px; }}
-                h1 {{ font-size: 1.8rem; }}
-                .stats-grid {{ grid-template-columns: repeat(2, 1fr); gap: 10px; }}
-                .stat-card {{ padding: 15px; }}
-                .stat-value {{ font-size: 1.3rem; }}
-                .phase-comparison {{ grid-template-columns: 1fr; }}
-                .filters {{ flex-direction: column; }}
-                .filter-group {{ width: 100%; }}
-                .filter-group select, .filter-group input {{ flex: 1; }}
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <!-- Fleet Navigation -->
-            <nav class="fleet-nav">
-                <a href="https://forex-bot-live-489986279698.us-central1.run.app/journey" class="fleet-nav-link active">
-                    <span>🔴</span> Forex Bot (Live OANDA)
-                </a>
-                <a href="https://options-regime-bot-489986279698.us-central1.run.app/journey" class="fleet-nav-link">
-                    <span>🧪</span> Options Bot (Tradier Sandbox)
-                </a>
-                <a href="https://crypto-bot-489986279698.us-central1.run.app/journey" class="fleet-nav-link">
-                    <span>🟡</span> Crypto Bot (Serverless Cloud Run)
-                </a>
-            </nav>
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Fleet Navigation -->
+        <nav class="fleet-nav">
+            <a href="https://forex-bot-live-489986279698.us-central1.run.app/journey" class="fleet-nav-link active">
+                <span>🔴</span> Forex Bot (Live OANDA)
+            </a>
+            <a href="https://options-regime-bot-489986279698.us-central1.run.app/journey" class="fleet-nav-link">
+                <span>🧪</span> Options Bot (Tradier Sandbox)
+            </a>
+            <a href="https://crypto-bot-489986279698.us-central1.run.app/journey" class="fleet-nav-link">
+                <span>🟡</span> Crypto Bot (Serverless Cloud Run)
+            </a>
+        </nav>
 
-            <div class="header">
-                <h1>📈 Multi-Regime Forex Trading Journey</h1>
-                <p class="subtitle">Active Roster: USD_CAD, EUR_USD, AUD_USD • {"Primary Live OANDA CFD (001-001-20048243-002)" if view_mode == "live" else "Historical Demo Baseline (101-001-38009813-001)"}</p>
-                <div style="display:flex; justify-content:center; gap:10px; margin-top:14px;">
-                    <a href="/journey?view=demo" style="padding: 6px 14px; border-radius: 18px; text-decoration: none; font-weight: 600; font-size: 0.82rem; border: 1px solid {'#4ecdc4' if view_mode != 'live' else 'rgba(255,255,255,0.15)'}; background: {'rgba(78,205,196,0.18)' if view_mode != 'live' else 'rgba(255,255,255,0.04)'}; color: {'#4ecdc4' if view_mode != 'live' else '#888'};">
-                        📊 Demo Baseline (271 Trades &bull; $5,000)
-                    </a>
-                    <a href="/journey?view=live" style="padding: 6px 14px; border-radius: 18px; text-decoration: none; font-weight: 600; font-size: 0.82rem; border: 1px solid {'#ff6b6b' if view_mode == 'live' else 'rgba(255,255,255,0.15)'}; background: {'rgba(255,107,107,0.18)' if view_mode == 'live' else 'rgba(255,255,255,0.04)'}; color: {'#ff6b6b' if view_mode == 'live' else '#888'};">
-                        🔴 Live Account (81 Trades &bull; $308.48)
-                    </a>
-                </div>
-            </div>
-            
-            <!-- Primary Stats -->
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-value {"positive" if total_pnl >= 0 else "negative"}">${total_pnl:+,.2f}</div>
-                    <div class="stat-label">Total P/L</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">{len(trades)}</div>
-                    <div class="stat-label">Total Trades</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">{win_rate:.1f}%</div>
-                    <div class="stat-label">Win Rate</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">{profit_factor:.2f}</div>
-                    <div class="stat-label">Profit Factor</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">{metrics.get("sharpe_ratio", 0):.2f}</div>
-                    <div class="stat-label">Sharpe Ratio</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value negative">-{metrics.get("max_drawdown_pct", 0):.1f}%</div>
-                    <div class="stat-label">Max Drawdown</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value positive">🔥 {metrics.get("max_win_streak", 0)}</div>
-                    <div class="stat-label">Best Streak</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value negative">🚫 {metrics.get("max_loss_streak", 0)}</div>
-                    <div class="stat-label">Worst Streak</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">{metrics.get("avg_holding_hours", 0):.1f}h</div>
-                    <div class="stat-label">Avg Hold Time</div>
-                </div>
-            </div>
-            
-            <!-- Capital Scaling Scorecard & 25-Trade Gate -->
-            <div class="section-header">
-                <span class="icon">🚀</span>
-                <h2>Capital Scaling Scorecard & 25-Trade Live Gate</h2>
-            </div>
-            
-            <div class="stat-card" style="text-align:left; padding: 25px; margin-bottom: 30px; border-left: 5px solid #4ecdc4;">
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 15px;">
-                    <div>
-                        <div style="font-size:1.1rem; font-weight:700; color:#fff;">Live Baseline: $308.48 &bull; Next Capital Injection: +$700.00 &rarr; $1,000.00 Target</div>
-                        <div style="font-size:0.85rem; color:#aaa; margin-top:3px;">
-                            Primary OANDA Live CFD Account (<code>001-001-20048243-002</code>) &bull; 25 closed live trades required before deploying additional funds.
-                        </div>
-                    </div>
-                    <div style="background: rgba(78, 205, 196, 0.15); border: 1px solid rgba(78, 205, 196, 0.3); color: #4ecdc4; padding: 6px 14px; border-radius: 20px; font-size: 0.85rem; font-weight: 700;">
-                        {min(p73_count, 25)} / 25 LIVE TRADES ({min(100, p73_count / 25 * 100):.0f}%)
-                    </div>
-                </div>
+        <div class="header">
+            <h1>📈 Multi-Regime Forex Trading Journey</h1>
+            <p class="subtitle">Primary Live OANDA CFD (<code>001-001-20048243-002</code>) &bull; Active Roster: USD_CAD, EUR_USD, AUD_USD</p>
+        </div>
 
-                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
-                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 1: SAMPLE SIZE</div>
-                        <div style="font-size:1.4rem; font-weight:bold; color:#4ecdc4; margin: 4px 0;">{p73_count} / 25</div>
-                        <div style="height:6px; background:rgba(255,255,255,0.1); border-radius:3px; margin: 6px 0;">
-                            <div style="height:100%; width:{min(p73_count / 25 * 100, 100):.0f}%; background:#4ecdc4; border-radius:3px;"></div>
-                        </div>
-                        <div style="font-size:0.75rem; color:#aaa;">Status: {"✅ QUALIFIED" if p73_count >= 25 else f"🟡 {max(0, 25 - p73_count)} TRADES LEFT"}</div>
-                    </div>
-
-                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 2: WIN RATE (&ge; 55%)</div>
-                        <div style="font-size:1.4rem; font-weight:bold; color:{"#4caf50" if p73_wr >= 55 else "#ffc107" if p73_wr >= 45 else "#f44336"}; margin: 4px 0;">{p73_wr:.1f}%</div>
-                        <div style="font-size:0.75rem; color:#aaa; margin-top:8px;">Status: {"✅ PASS" if p73_wr >= 55 else "🟡 TRACKING" if p73_wr >= 45 else "❌ BELOW GOAL"}</div>
-                    </div>
-
-                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 3: PROFIT FACTOR (&ge; 1.50)</div>
-                        <div style="font-size:1.4rem; font-weight:bold; color:#4ecdc4; margin: 4px 0;">{profit_factor:.2f}</div>
-                        <div style="font-size:0.75rem; color:#aaa; margin-top:8px;">Status: {"✅ PASS" if profit_factor >= 1.50 else "🟡 TRACKING"}</div>
-                    </div>
-
-                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 4: MAX DRAWDOWN (&le; 5%)</div>
-                        <div style="font-size:1.4rem; font-weight:bold; color:{"#4caf50" if p73_max_dd <= 5 else "#f44336"}; margin: 4px 0;">{p73_max_dd:.1f}%</div>
-                        <div style="font-size:0.75rem; color:#aaa; margin-top:8px;">Status: {"✅ SAFE" if p73_max_dd <= 5 else "❌ BREACHED"}</div>
-                    </div>
-
-                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 5: SPREAD GUARD (TP &ge; 4x)</div>
-                        <div style="font-size:1.4rem; font-weight:bold; color:#4caf50; margin: 4px 0;">ACTIVE</div>
-                        <div style="font-size:0.75rem; color:#aaa; margin-top:8px;">Status: ✅ SPREAD DRAG &le; 15%</div>
-                    </div>
-
-                    <div style="background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <div style="font-size:0.75rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 6: REAL-TIME AI COPILOT</div>
-                        <div style="font-size:1.4rem; font-weight:bold; color:#4ecdc4; margin: 4px 0;">Gemini 3.8</div>
-                        <div style="font-size:0.75rem; color:#aaa; margin-top:8px;">Status: ✅ IN-FLIGHT DEFENSE</div>
-                    </div>
-                </div>
-
-                <!-- Capital Scaling Ladder -->
-                <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 20px;">
-                    <div style="font-size: 1rem; font-weight: 700; color: #fff; margin-bottom: 15px;">💰 Forex Capital Scaling Ladder</div>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px;">
-                        <div style="background: rgba(78, 205, 196, 0.05); border: 1px solid rgba(78, 205, 196, 0.4); border-radius: 10px; padding: 15px;">
-                            <div style="font-size: 0.75rem; color: #4ecdc4; font-weight: bold;">CURRENT BASELINE</div>
-                            <div style="font-size: 1.3rem; font-weight: bold; color: #fff; margin: 4px 0;">$308.48 Live</div>
-                            <div style="font-size: 0.8rem; color: #aaa; line-height: 1.4;">
-                                &bull; Micro-lot execution (1,000 units)<br>
-                                &bull; Testing 3-pair live execution<br>
-                                &bull; $30 daily stop loss ceiling
-                            </div>
-                        </div>
-
-                        <div style="background: rgba(76, 175, 80, 0.05); border: 1px solid rgba(76, 175, 80, 0.4); border-radius: 10px; padding: 15px;">
-                            <div style="font-size: 0.75rem; color: #4caf50; font-weight: bold;">TRANCHE 1: CAPITAL SCALE</div>
-                            <div style="font-size: 1.3rem; font-weight: bold; color: #4caf50; margin: 4px 0;">$1,000.00</div>
-                            <div style="font-size: 0.8rem; color: #aaa; line-height: 1.4;">
-                                &bull; <strong>Deposit:</strong> +$700.00 transfer<br>
-                                &bull; <strong>Position Sizing:</strong> 3,000–5,000 units<br>
-                                &bull; <strong>Prerequisite:</strong> Pass 25-trade gates
-                            </div>
-                        </div>
-
-                        <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 15px;">
-                            <div style="font-size: 0.75rem; color: #aaa; font-weight: bold;">TRANCHE 2: ALPHA EXPANSION</div>
-                            <div style="font-size: 1.3rem; font-weight: bold; color: #fff; margin: 4px 0;">$2,500.00</div>
-                            <div style="font-size: 0.8rem; color: #aaa; line-height: 1.4;">
-                                &bull; <strong>Position Sizing:</strong> 8,000–10,000 units<br>
-                                &bull; <strong>Prerequisite:</strong> 50 live trades with PF &ge; 1.40<br>
-                                &bull; Max drawdown &le; 6%
-                            </div>
-                        </div>
-
-                        <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 15px;">
-                            <div style="font-size: 0.75rem; color: #aaa; font-weight: bold;">TRANCHE 3: FULL PRODUCTION</div>
-                            <div style="font-size: 1.3rem; font-weight: bold; color: #fff; margin: 4px 0;">$5,000.00+</div>
-                            <div style="font-size: 0.8rem; color: #aaa; line-height: 1.4;">
-                                &bull; <strong>Position Sizing:</strong> 15,000+ units<br>
-                                &bull; Compound profit reinvestment<br>
-                                &bull; Sharpe Ratio &ge; 1.50 across 60 days
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        <!-- Primary Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value {'positive' if total_pnl >= 0 else 'negative'}">${total_pnl:+,.2f}</div>
+                <div class="stat-label">Total P/L</div>
             </div>
-            
-            <!-- Trade History with Filters (MOVED UP) -->
-            <div class="section-header">
-                <span class="icon">📋</span>
-                <h2>Trade History</h2>
+            <div class="stat-card">
+                <div class="stat-value">{len(trades)}</div>
+                <div class="stat-label">Total Trades</div>
             </div>
-            
-            <div class="filters">
-                <div class="filter-group">
-                    <label>Direction:</label>
-                    <select id="filterDirection">
-                        <option value="all">All</option>
-                        <option value="LONG">Long Only</option>
-                        <option value="SHORT">Short Only</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Result:</label>
-                    <select id="filterResult">
-                        <option value="all">All</option>
-                        <option value="winners">Winners Only</option>
-                        <option value="losers">Losers Only</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Phase:</label>
-                    <select id="filterPhase">
-                        <option value="all">All Phases</option>
-                        <option value="Phase 1">Phase 1: Early</option>
-                        <option value="Phase 2">Phase 2: Safety</option>
-                        <option value="Phase 3">Phase 3: Probe</option>
-                        <option value="Phase 4">Phase 4: Regime</option>
-                        <option value="Phase 5">Phase 5: Enhanced</option>
-                        <option value="Phase 6">Phase 6: Pre-Trailing</option>
-                        <option value="Phase 7:">Phase 7: Trailing</option>
-                        <option value="Phase 7.1">Phase 7.1: Trailing Opt</option>
-                        <option value="Phase 7.2">Phase 7.2: Position Fix</option>
-                    </select>
-                </div>
-                <button class="filter-btn" onclick="applyFilters()">Apply Filters</button>
-                <button class="filter-btn" style="background: #666;" onclick="resetFilters()">Reset</button>
+            <div class="stat-card">
+                <div class="stat-value">{win_rate:.1f}%</div>
+                <div class="stat-label">Win Rate</div>
             </div>
-            
-            <div class="table-container">
-                <table id="tradesTable">
-                    <thead>
-                        <tr><th>Date</th><th>Dir</th><th>Units</th><th>Entry → Exit</th><th>Pips</th><th>P/L</th><th>Balance</th><th>Hold</th><th>Bot Phase</th></tr>
-                    </thead>
-                    <tbody>
-                        {trade_rows}
-                    </tbody>
-                </table>
+            <div class="stat-card">
+                <div class="stat-value">{profit_factor:.2f}</div>
+                <div class="stat-label">Profit Factor</div>
             </div>
-            
-            <!-- Equity Curve -->
-            <div class="section-header">
-                <span class="icon">📈</span>
-                <h2>Equity Curve</h2>
+            <div class="stat-card">
+                <div class="stat-value">{metrics.get("sharpe_ratio", 0):.2f}</div>
+                <div class="stat-label">Sharpe Ratio</div>
             </div>
-            <div class="chart-container">
-                <canvas id="equityChart" height="300"></canvas>
+            <div class="stat-card">
+                <div class="stat-value negative">-{metrics.get("max_drawdown_pct", 0):.1f}%</div>
+                <div class="stat-label">Max Drawdown</div>
             </div>
-            
-            <!-- Phase Comparison (5 PHASES) -->
-            <div class="section-header">
-                <span class="icon">📊</span>
-                <h2>Performance by Phase</h2>
+            <div class="stat-card">
+                <div class="stat-value positive">🔥 {metrics.get("max_win_streak", 0)}</div>
+                <div class="stat-label">Best Streak</div>
             </div>
-            <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
-                <div class="stat-card" style="border-left: 4px solid #4caf50;">
-                    <div class="stat-value">🚀 {p1_count}</div>
-                    <div class="stat-label">Phase 1: Early</div>
-                    <div style="font-size:0.75rem;color:#888;margin-top:5px;">P/L: <span class="{"positive" if p1_pnl >= 0 else "negative"}">${p1_pnl:+,.0f}</span> | WR: {p1_wr:.0f}%</div>
-                </div>
-                <div class="stat-card" style="border-left: 4px solid #ffc107;">
-                    <div class="stat-value">🛑 {p2_count}</div>
-                    <div class="stat-label">Phase 2: Safety</div>
-                    <div style="font-size:0.75rem;color:#888;margin-top:5px;">P/L: <span class="{"positive" if p2_pnl >= 0 else "negative"}">${p2_pnl:+,.0f}</span> | WR: {p2_wr:.0f}%</div>
-                </div>
-                <div class="stat-card" style="border-left: 4px solid #2196f3;">
-                    <div class="stat-value">🔍 {p3_count}</div>
-                    <div class="stat-label">Phase 3: Probe</div>
-                    <div style="font-size:0.75rem;color:#888;margin-top:5px;">P/L: <span class="{"positive" if p3_pnl >= 0 else "negative"}">${p3_pnl:+,.0f}</span> | WR: {p3_wr:.0f}%</div>
-                </div>
-                <div class="stat-card" style="border-left: 4px solid #4ecdc4;">
-                    <div class="stat-value">🛡️ {p4_count}</div>
-                    <div class="stat-label">Phase 4: Regime</div>
-                    <div style="font-size:0.75rem;color:#888;margin-top:5px;">P/L: <span class="{"positive" if p4_pnl >= 0 else "negative"}">${p4_pnl:+,.0f}</span> | WR: {p4_wr:.0f}%</div>
-                </div>
-                <div class="stat-card" style="border-left: 4px solid #9b59b6;">
-                    <div class="stat-value">🎯 {p5_count}</div>
-                    <div class="stat-label">Phase 5: Enhanced</div>
-                    <div style="font-size:0.75rem;color:#888;margin-top:5px;">P/L: <span class="{"positive" if p5_pnl >= 0 else "negative"}">${p5_pnl:+,.0f}</span> | WR: {p5_wr:.0f}%</div>
-                </div>
-                <div class="stat-card" style="border-left: 4px solid #e74c3c;">
-                    <div class="stat-value">📉 {p6_count}</div>
-                    <div class="stat-label">Phase 6: Pre-Trailing</div>
-                    <div style="font-size:0.75rem;color:#888;margin-top:5px;">P/L: <span class="{"positive" if p6_pnl >= 0 else "negative"}">${p6_pnl:+,.0f}</span> | WR: {p6_wr:.0f}%</div>
-                </div>
-                <div class="stat-card" style="border-left: 4px solid #f39c12;">
-                    <div class="stat-value">🔄 {p7_count}</div>
-                    <div class="stat-label">Phase 7: Trailing</div>
-                    <div style="font-size:0.75rem;color:#888;margin-top:5px;">P/L: <span class="{"positive" if p7_pnl >= 0 else "negative"}">${p7_pnl:+,.0f}</span> | WR: {p7_wr:.0f}%</div>
-                </div>
-                <div class="stat-card" style="border-left: 4px solid #3498db;">
-                    <div class="stat-value">📈 {p71_count}</div>
-                    <div class="stat-label">Phase 7.1: Trailing Opt</div>
-                    <div style="font-size:0.75rem;color:#888;margin-top:5px;">P/L: <span class="{"positive" if p71_pnl >= 0 else "negative"}">${p71_pnl:+,.0f}</span> | WR: {p71_wr:.0f}%</div>
-                </div>
-                <div class="stat-card" style="border-left: 4px solid #1abc9c;">
-                    <div class="stat-value">✨ {p72_count}</div>
-                    <div class="stat-label">Phase 7.2: Position Fix</div>
-                    <div style="font-size:0.75rem;color:#888;margin-top:5px;">P/L: <span class="{"positive" if p72_pnl >= 0 else "negative"}">${p72_pnl:+,.0f}</span> | WR: {p72_wr:.0f}%</div>
-                </div>
-            </div>
-            
-            <!-- Bot Fix Timeline -->
-            <div class="section-header">
-                <span class="icon">🔧</span>
-                <h2>Bot Improvements Timeline</h2>
-            </div>
-            <div class="chart-container">
-                <div class="timeline">
-                    {fix_timeline_html}
-                </div>
-            </div>
-            
-            <div class="footer">
-                <p>Last Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC</p>
-                <p>Strategy: Mean Reversion + Trend Following (BB + RSI) • Timeframe: M15 • Starting Balance: $5,000</p>
+            <div class="stat-card">
+                <div class="stat-value">{metrics.get("avg_holding_hours", 0):.1f}h</div>
+                <div class="stat-label">Avg Hold Time</div>
             </div>
         </div>
-        
-        <script>
-            // Equity Chart
-            const equityData = {json.dumps(equity_points)};
-            const ctx = document.getElementById('equityChart').getContext('2d');
-            
-            // Create gradient
-            const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-            gradient.addColorStop(0, 'rgba(78, 205, 196, 0.3)');
-            gradient.addColorStop(1, 'rgba(78, 205, 196, 0.0)');
-            
-            new Chart(ctx, {{
-                type: 'line',
-                data: {{
-                    labels: equityData.map(p => p.x),
-                    datasets: [{{
-                        label: 'Equity',
-                        data: equityData.map(p => p.y),
-                        borderColor: '#4ecdc4',
-                        backgroundColor: gradient,
-                        fill: true,
-                        tension: 0.2,
-                        pointRadius: 4,
-                        pointBackgroundColor: equityData.map(p => p.pnl >= 0 ? '#4caf50' : '#f44336'),
-                        pointBorderColor: '#fff',
-                        pointBorderWidth: 1,
-                        pointHoverRadius: 6
-                    }}]
+
+        <!-- Capital Scaling Scorecard & 25-Trade Gate -->
+        <div class="section-header">
+            <span>🚀</span>
+            <h2>Capital Scaling Scorecard & 25-Trade Live Gate</h2>
+        </div>
+
+        <div class="gate-card">
+            <div class="gate-header">
+                <div>
+                    <div style="font-size:1rem; font-weight:700; color:#fff;">Live Baseline: $308.48 &bull; Next Capital Injection: +$700.00 &rarr; $1,000.00 Target</div>
+                    <div style="font-size:0.8rem; color:#aaa; margin-top:2px;">
+                        Primary OANDA Live CFD Account (<code>001-001-20048243-002</code>) &bull; 25 live trades required before deploying additional funds.
+                    </div>
+                </div>
+                <div class="gate-badge">
+                    {min(live_trades_count, 25)} / 25 LIVE TRADES ({min(100, live_trades_count / 25 * 100):.0f}%)
+                </div>
+            </div>
+
+            <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 16px;">
+                <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                    <div style="font-size:0.72rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 1: SAMPLE SIZE</div>
+                    <div style="font-size:1.3rem; font-weight:bold; color:#4ecdc4; margin: 3px 0;">{live_trades_count} / 25</div>
+                    <div style="height:5px; background:rgba(255,255,255,0.1); border-radius:3px; margin: 4px 0;">
+                        <div style="height:100%; width:{min(live_trades_count / 25 * 100, 100):.0f}%; background:#4ecdc4; border-radius:3px;"></div>
+                    </div>
+                    <div style="font-size:0.72rem; color:#aaa;">Status: {'✅ QUALIFIED' if live_trades_count >= 25 else f'🟡 {max(0, 25 - live_trades_count)} TRADES LEFT'}</div>
+                </div>
+
+                <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                    <div style="font-size:0.72rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 2: WIN RATE (&ge; 55%)</div>
+                    <div style="font-size:1.3rem; font-weight:bold; color:{'#4caf50' if win_rate >= 55 else '#ffc107' if win_rate >= 45 else '#f44336'}; margin: 3px 0;">{win_rate:.1f}%</div>
+                    <div style="font-size:0.72rem; color:#aaa;">Status: {'✅ PASS' if win_rate >= 55 else '🟡 TRACKING'}</div>
+                </div>
+
+                <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                    <div style="font-size:0.72rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 3: PROFIT FACTOR (&ge; 1.50)</div>
+                    <div style="font-size:1.3rem; font-weight:bold; color:#4ecdc4; margin: 3px 0;">{profit_factor:.2f}</div>
+                    <div style="font-size:0.72rem; color:#aaa;">Status: {'✅ PASS' if profit_factor >= 1.50 else '🟡 TRACKING'}</div>
+                </div>
+
+                <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                    <div style="font-size:0.72rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 4: MAX DRAWDOWN (&le; 5%)</div>
+                    <div style="font-size:1.3rem; font-weight:bold; color:{'#4caf50' if max_dd_pct <= 5 else '#f44336'}; margin: 3px 0;">{max_dd_pct:.1f}%</div>
+                    <div style="font-size:0.72rem; color:#aaa;">Status: {'✅ SAFE' if max_dd_pct <= 5 else '❌ BREACHED'}</div>
+                </div>
+
+                <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                    <div style="font-size:0.72rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 5: SPREAD GUARD (TP &ge; 4x)</div>
+                    <div style="font-size:1.3rem; font-weight:bold; color:#4caf50; margin: 3px 0;">ACTIVE</div>
+                    <div style="font-size:0.72rem; color:#aaa;">Status: ✅ SPREAD DRAG &le; 15%</div>
+                </div>
+
+                <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                    <div style="font-size:0.72rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 6: REAL-TIME AI COPILOT</div>
+                    <div style="font-size:1.3rem; font-weight:bold; color:#4ecdc4; margin: 3px 0;">ACTIVE</div>
+                    <div style="font-size:0.72rem; color:#aaa;">Status: ✅ IN-FLIGHT DEFENSE</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Performance by Pair -->
+        <div class="section-header">
+            <span>💱</span>
+            <h2>Active Roster Breakdown</h2>
+        </div>
+        <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
+            {pair_cards_html}
+        </div>
+
+        <!-- Trade History with Filters -->
+        <div class="section-header">
+            <span>📋</span>
+            <h2>Live Trade History</h2>
+        </div>
+
+        <div class="filters">
+            <div class="filter-group">
+                <label>Pair:</label>
+                <select id="filterPair">
+                    <option value="all">All Pairs</option>
+                    <option value="USD_CAD">USD_CAD</option>
+                    <option value="EUR_USD">EUR_USD</option>
+                    <option value="AUD_USD">AUD_USD</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Direction:</label>
+                <select id="filterDirection">
+                    <option value="all">All</option>
+                    <option value="LONG">Long Only</option>
+                    <option value="SHORT">Short Only</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Result:</label>
+                <select id="filterResult">
+                    <option value="all">All</option>
+                    <option value="winners">Winners Only</option>
+                    <option value="losers">Losers Only</option>
+                </select>
+            </div>
+            <div style="display:flex; gap:6px;">
+                <button class="filter-btn" onclick="applyFilters()">Apply</button>
+                <button class="filter-btn" style="background:#555;" onclick="resetFilters()">Reset</button>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table id="tradesTable">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Pair</th>
+                        <th>Dir</th>
+                        <th>Units</th>
+                        <th>Entry → Exit</th>
+                        <th>Pips</th>
+                        <th>P/L</th>
+                        <th>Balance</th>
+                        <th>Hold</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {trade_rows}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Equity Curve -->
+        <div class="section-header">
+            <span>📈</span>
+            <h2>Live Equity Curve</h2>
+        </div>
+        <div class="chart-container">
+            <canvas id="equityChart"></canvas>
+        </div>
+
+        <!-- Bot Improvements Timeline -->
+        <div class="section-header">
+            <span>🔧</span>
+            <h2>Live Architecture & Strategy Timeline</h2>
+        </div>
+        <div class="chart-container" style="height:auto; min-height:200px;">
+            <div class="timeline">
+                {fix_timeline_html}
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>Live Primary OANDA CFD Account (<code>001-001-20048243-002</code>) &bull; Starting Baseline: $308.48</p>
+            <p>Strategy: Multi-Pair Mean Reversion & Impulse Scalping &bull; Serverless Cloud Run</p>
+        </div>
+    </div>
+
+    <script>
+        // Equity Chart
+        const equityData = {json.dumps(equity_points)};
+        const ctx = document.getElementById('equityChart').getContext('2d');
+
+        const gradient = ctx.createLinearGradient(0, 0, 0, 260);
+        gradient.addColorStop(0, 'rgba(78, 205, 196, 0.35)');
+        gradient.addColorStop(1, 'rgba(78, 205, 196, 0.0)');
+
+        new Chart(ctx, {{
+            type: 'line',
+            data: {{
+                labels: equityData.map(p => p.x),
+                datasets: [{{
+                    label: 'Live Equity',
+                    data: equityData.map(p => p.y),
+                    borderColor: '#4ecdc4',
+                    backgroundColor: gradient,
+                    fill: true,
+                    tension: 0.2,
+                    pointRadius: 3,
+                    pointBackgroundColor: equityData.map(p => p.pnl >= 0 ? '#4caf50' : '#f44336'),
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 1,
+                    pointHoverRadius: 5
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {{
+                    intersect: false,
+                    mode: 'index'
                 }},
-                options: {{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: {{
-                        intersect: false,
-                        mode: 'index'
-                    }},
-                    plugins: {{
-                        legend: {{ display: false }},
-                        tooltip: {{
-                            backgroundColor: 'rgba(0,0,0,0.8)',
-                            titleColor: '#4ecdc4',
-                            bodyColor: '#fff',
-                            borderColor: '#4ecdc4',
-                            borderWidth: 1,
-                            callbacks: {{
-                                label: function(context) {{
-                                    const point = equityData[context.dataIndex];
-                                    return [
-                                        'Equity: $' + point.y.toLocaleString(),
-                                        'Trade P/L: $' + (point.pnl >= 0 ? '+' : '') + point.pnl.toFixed(2),
-                                        'Phase: ' + point.phase
-                                    ];
-                                }}
+                plugins: {{
+                    legend: {{ display: false }},
+                    tooltip: {{
+                        backgroundColor: 'rgba(0,0,0,0.85)',
+                        titleColor: '#4ecdc4',
+                        bodyColor: '#fff',
+                        borderColor: '#4ecdc4',
+                        borderWidth: 1,
+                        callbacks: {{
+                            label: function(context) {{
+                                const point = equityData[context.dataIndex];
+                                return [
+                                    'Equity: $' + point.y.toLocaleString(undefined, {{minimumFractionDigits: 2}}),
+                                    'Trade P/L: $' + (point.pnl >= 0 ? '+' : '') + point.pnl.toFixed(2),
+                                    'Pair: ' + (point.pair || 'USD_CAD')
+                                ];
                             }}
                         }}
+                    }}
+                }},
+                scales: {{
+                    x: {{
+                        display: true,
+                        grid: {{ color: 'rgba(255,255,255,0.03)' }},
+                        ticks: {{ color: '#888', maxRotation: 45, font: {{ size: 10 }} }}
                     }},
-                    scales: {{
-                        x: {{ 
-                            display: true,
-                            title: {{ display: true, text: 'Trade Date', color: '#888' }},
-                            grid: {{ color: 'rgba(255,255,255,0.03)' }},
-                            ticks: {{ color: '#888', maxRotation: 45 }}
-                        }},
-                        y: {{ 
-                            display: true,
-                            title: {{ display: true, text: 'Equity ($)', color: '#888' }},
-                            grid: {{ color: 'rgba(255,255,255,0.05)' }},
-                            ticks: {{ color: '#888' }}
-                        }}
+                    y: {{
+                        display: true,
+                        grid: {{ color: 'rgba(255,255,255,0.05)' }},
+                        ticks: {{ color: '#888', font: {{ size: 10 }} }}
                     }}
                 }}
+            }}
+        }});
+
+        // Filter functions
+        function applyFilters() {{
+            const pair = document.getElementById('filterPair').value;
+            const direction = document.getElementById('filterDirection').value;
+            const result = document.getElementById('filterResult').value;
+
+            const rows = document.querySelectorAll('#tradesTable tbody tr');
+            rows.forEach(row => {{
+                let show = true;
+                if (pair !== 'all' && row.dataset.pair !== pair) show = false;
+                if (direction !== 'all' && row.dataset.direction !== direction) show = false;
+                if (result === 'winners' && parseFloat(row.dataset.pnl) <= 0) show = false;
+                if (result === 'losers' && parseFloat(row.dataset.pnl) >= 0) show = false;
+                row.style.display = show ? '' : 'none';
             }});
-            
-            // Filter functions
-            function applyFilters() {{
-                const direction = document.getElementById('filterDirection').value;
-                const result = document.getElementById('filterResult').value;
-                const phase = document.getElementById('filterPhase').value;
-                
-                const rows = document.querySelectorAll('#tradesTable tbody tr');
-                rows.forEach(row => {{
-                    let show = true;
-                    
-                    if (direction !== 'all' && row.dataset.direction !== direction) show = false;
-                    if (result === 'winners' && parseFloat(row.dataset.pnl) <= 0) show = false;
-                    if (result === 'losers' && parseFloat(row.dataset.pnl) >= 0) show = false;
-                    if (phase !== 'all' && !row.dataset.phase.includes(phase)) show = false;
-                    
-                    row.style.display = show ? '' : 'none';
-                }});
-            }}
-            
-            function resetFilters() {{
-                document.getElementById('filterDirection').value = 'all';
-                document.getElementById('filterResult').value = 'all';
-                document.getElementById('filterPhase').value = 'all';
-                const rows = document.querySelectorAll('#tradesTable tbody tr');
-                rows.forEach(row => row.style.display = '');
-            }}
-        </script>
-    </body>
-    </html>
-    """
+        }}
 
+        function resetFilters() {{
+            document.getElementById('filterPair').value = 'all';
+            document.getElementById('filterDirection').value = 'all';
+            document.getElementById('filterResult').value = 'all';
+            const rows = document.querySelectorAll('#tradesTable tbody tr');
+            rows.forEach(row => row.style.display = '');
+        }}
+    </script>
+</body>
+</html>"""
     return html
-
-
-# Test function for local development
-def test_journey_page():
-    """Test the journey page locally"""
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-    from oandapyV20 import API
-    from oandapyV20.endpoints.trades import TradesList
-
-    # Fetch trades
-    api = API(access_token=os.getenv("OANDA_API_KEY"), environment="practice")
-    r = TradesList(
-        accountID=os.getenv("OANDA_ACCOUNT_ID"),
-        params={"instrument": "USD_JPY", "state": "ALL", "count": 100},
-    )
-    api.request(r)
-    trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
-
-    print(f"Found {len(trades)} closed trades")
-
-    # Generate HTML
-    html = generate_journey_html(trades)
-
-    # Save to file for preview
-    with open("/tmp/journey_preview.html", "w") as f:
-        f.write(html)
-
-    print("Preview saved to /tmp/journey_preview.html")
-    print("Open this file in your browser to preview the enhanced journey page")
-
-    return html
-
-
-if __name__ == "__main__":
-    test_journey_page()

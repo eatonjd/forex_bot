@@ -252,7 +252,8 @@ def status():
     from utils.oanda_connector import OANDAConnector
 
     try:
-        oanda = OANDAConnector(environment="practice")
+        env = os.getenv("OANDA_ENVIRONMENT", "live")
+        oanda = OANDAConnector(environment=env)
         account = oanda.get_account_summary()
         positions = oanda.get_open_positions()
 
@@ -693,75 +694,27 @@ def dashboard_old():
 
 @app.route("/journey")
 def journey():
-    """Enhanced public trading journey page with phase tracking and trade details"""
-    from flask import request
+    """Enhanced public trading journey page for Primary Live OANDA CFD Account (001-001-20048243-002)"""
     from oandapyV20 import API
     from oandapyV20.endpoints.trades import TradesList
     from journey_page import generate_journey_html
 
-    view = request.args.get("view", "demo").lower()
-    start_balance = 5000 if view != "live" else 308.48
+    live_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
+    live_id = os.getenv("OANDA_ACCOUNT_ID_LIVE", "001-001-20048243-002")
+    start_balance = 308.48
     trades = []
 
-    # 1. Fetch Live trades if requested
-    if view == "live":
-        live_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
-        live_id = os.getenv("OANDA_ACCOUNT_ID_LIVE", "001-001-20048243-002")
-        if live_key and live_id:
-            try:
-                api = API(access_token=live_key, environment="live")
-                r = TradesList(accountID=live_id, params={"state": "ALL", "count": 500})
-                api.request(r)
-                trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
-            except Exception as e:
-                print(f"Journey live fetch error: {e}", flush=True)
-
-    # 2. Fetch Demo trades (default or fallback)
-    if not trades and view != "live":
-        demo_key = os.getenv("OANDA_API_KEY_DEMO") or os.getenv("OANDA_API_KEY")
-        demo_id = os.getenv("OANDA_ACCOUNT_ID_DEMO") or os.getenv("OANDA_ACCOUNT_ID", "101-001-38009813-001")
-        if demo_key and demo_id:
-            try:
-                api = API(access_token=demo_key, environment="practice")
-                r = TradesList(accountID=demo_id, params={"state": "ALL", "count": 500})
-                api.request(r)
-                trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
-                start_balance = 5000
-                view = "demo"
-            except Exception as e:
-                print(f"Journey demo fetch error: {e}", flush=True)
-
-    # 3. Fallbacks if primary query returned 0 trades
-    if not trades:
-        if view == "live":
-            demo_key = os.getenv("OANDA_API_KEY_DEMO") or os.getenv("OANDA_API_KEY")
-            demo_id = os.getenv("OANDA_ACCOUNT_ID_DEMO") or os.getenv("OANDA_ACCOUNT_ID", "101-001-38009813-001")
-            if demo_key and demo_id:
-                try:
-                    api = API(access_token=demo_key, environment="practice")
-                    r = TradesList(accountID=demo_id, params={"state": "ALL", "count": 500})
-                    api.request(r)
-                    trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
-                    start_balance = 5000
-                    view = "demo"
-                except Exception as e:
-                    print(f"Journey demo fallback error: {e}", flush=True)
-        else:
-            live_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
-            live_id = os.getenv("OANDA_ACCOUNT_ID_LIVE", "001-001-20048243-002")
-            if live_key and live_id:
-                try:
-                    api = API(access_token=live_key, environment="live")
-                    r = TradesList(accountID=live_id, params={"state": "ALL", "count": 500})
-                    api.request(r)
-                    trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
-                    start_balance = 308.48
-                    view = "live"
-                except Exception as e:
-                    print(f"Journey live fallback error: {e}", flush=True)
+    if live_key and live_id:
+        try:
+            api = API(access_token=live_key, environment="live")
+            r = TradesList(accountID=live_id, params={"state": "ALL", "count": 500})
+            api.request(r)
+            trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
+        except Exception as e:
+            print(f"Journey live fetch error: {e}", flush=True)
 
     # Generate enhanced HTML from journey_page module
-    html = generate_journey_html(trades, start_balance=start_balance, view_mode=view)
+    html = generate_journey_html(trades, start_balance=start_balance, view_mode="live")
     return html
 
 
@@ -787,12 +740,29 @@ def review_trades():
         analyzer = PostTradeAnalyzer()
         days = int(request.args.get("days", 3))
         reports = analyzer.analyze_new_trades(days=days)
+        all_reviews = analyzer.get_trade_reviews()
         return jsonify({
             "status": "success",
             "reviewed_trades_count": len(reports),
-            "reports": reports
+            "reports": reports,
+            "latest_reviews": all_reviews[-10:] if all_reviews else []
         }), 200
     except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/unified-portfolio-review", methods=["GET", "POST"])
+def unified_portfolio_review():
+    """Trigger unified evening post-trade analysis and Telegram debrief across Crypto, Forex, and Options bots."""
+    try:
+        from utils.portfolio_synthesizer import PortfolioSynthesizer
+        hours = int(request.args.get("hours", 36))
+        force = request.args.get("force", "false").lower() == "true"
+        synthesizer = PortfolioSynthesizer()
+        result = synthesizer.run_daily_synthesis(hours=hours, force=force)
+        return jsonify(result), 200
+    except Exception as e:
+        print(f"❌ Error in unified portfolio review: {e}", flush=True)
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -807,7 +777,6 @@ def gemini_health():
         return jsonify(status), code
     except Exception as e:
         return jsonify({"healthy": False, "status": "ERROR", "error": str(e)}), 500
-
 
 
 if __name__ == "__main__":

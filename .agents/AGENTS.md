@@ -19,3 +19,10 @@
   - Webpage: `https://crypto-bot-489986279698.us-central1.run.app/`
   - Journey Dashboard: `https://crypto-bot-489986279698.us-central1.run.app/journey`
   - AI Trade Reviews: Automated Gemini 3.6 Flash post-trade analysis triggered daily at 8:00 PM EST (`crypto-trade-review-job`) and via `POST /trade-review`.
+
+## Mandatory Architecture & Risk Safety Rules
+- **Broker Ledger as Single Source of Truth:** Never rely on in-memory trade variables (`self.daily_pnl += pnl`) for trade accounting. Always reconcile position state, realized daily P/L, and trade closures directly from the broker's API ledger on every run cycle.
+- **Serverless Out-of-Band State Awareness:** Assume broker-side Stop Loss, Take Profit, and liquidation fills happen while the container is idle or asleep. When a position goes flat, query the broker's closed trades endpoint to capture the real exit price, timestamp, and realized P/L before resetting state.
+- **Circuit Breakers & Cooldowns:** Every bot must enforce an inviolable daily loss limit from the broker's realized P/L, a minimum 2-hour instrument cooldown after any stopped-out trade, and a consecutive loss circuit breaker (e.g. 3 consecutive losses pauses trading).
+- **Hard Notional & Unit Ceilings:** Percentage-based sizing formulas (e.g. 0.75% or 1.0% of NAV) must ALWAYS have a hard ceiling on total units / notional exposure (e.g., max 20,000 units on Forex) so unexpected balance spikes do not cause outsized leverage.
+- **Adversarial Code Review Standard:** Never stop at checking indicator math. Audit for out-of-band broker mutations, state leakage on container restarts, and broker-sync blind spots.

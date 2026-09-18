@@ -192,12 +192,16 @@ def build_ai_reviews_section():
 
     avg_reward = 0.0
     sortino_ratio = 0.0
+    scores = []
     if rewards:
-        scores = [r.get("reward_score", 0.0) for r in rewards]
-        avg_reward = sum(scores) / len(scores) if scores else 0.0
-        
+        scores = [float(r.get("reward_score", 0.0)) for r in rewards if r.get("reward_score") is not None]
+    elif reviews:
+        scores = [float(r.get("reward_score", 0.0)) for r in reviews if r.get("reward_score") is not None]
+
+    if scores:
+        avg_reward = sum(scores) / len(scores)
         downside = [min(0.0, s)**2 for s in scores]
-        d_std = (sum(downside) / len(scores))**0.5 if scores else 0.0
+        d_std = (sum(downside) / len(scores))**0.5
         sortino_ratio = avg_reward / (d_std + 1e-6) if d_std > 0 else avg_reward
 
     avg_class = "positive" if avg_reward >= 0 else "negative"

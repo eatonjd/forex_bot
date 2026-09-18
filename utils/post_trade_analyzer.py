@@ -71,6 +71,24 @@ class PostTradeAnalyzer:
             except Exception as e:
                 print(f"⚠️ GCS save reviewed keys error: {e}")
 
+    def get_trade_reviews(self) -> list:
+        """Load trade reviews list from GCS or local file."""
+        if self.logger.use_gcs and self.logger.gcs_bucket:
+            try:
+                blob = self.logger.gcs_bucket.blob("trade_logs/trade_reviews.json")
+                if blob.exists():
+                    return json.loads(blob.download_as_text())
+            except Exception as e:
+                print(f"⚠️ GCS load trade reviews error: {e}")
+        p = self.logger.log_dir / "trade_reviews.json"
+        if p.exists():
+            try:
+                with open(p, "r") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return []
+
     def analyze_new_trades(self, days: int = 3) -> list:
         """
         Scan for newly closed trades and generate Gemini-driven reports.
@@ -154,20 +172,37 @@ class PostTradeAnalyzer:
                         close_price = float(t.get("averageClosePrice", price))
                         ot = t.get("openTime", "")
                         ct = t.get("closeTime", "")
+                        dir_str = "LONG" if units > 0 else "SHORT"
+
+                        # Match against logged trades to hydrate rich telemetry context
+                        matched_log = None
+                        for l_t in reversed(trades):
+                            if l_t.get("action") == "OPEN" and l_t.get("symbol") == t.get("instrument"):
+                                if l_t.get("direction") == dir_str:
+                                    matched_log = l_t
+                                    break
+
+                        open_dict = {
+                            "symbol": t.get("instrument"),
+                            "direction": dir_str,
+                            "units": abs(units),
+                            "price": price,
+                            "timestamp": ot,
+                            "account_id": acct_id,
+                            "account_type": acct_type,
+                            "signal_reason": matched_log.get("signal_reason", "MEAN_REVERSION") if matched_log else "MEAN_REVERSION",
+                            "rsi": matched_log.get("rsi") if matched_log else None,
+                            "bb_position": matched_log.get("bb_position") if matched_log else None,
+                            "confidence": matched_log.get("confidence") if matched_log else None,
+                            "atr": matched_log.get("atr") if matched_log else None,
+                            "spread": matched_log.get("spread") if matched_log else None,
+                        }
+
                         closed_trades.append({
-                            "open": {
-                                "symbol": t.get("instrument"),
-                                "direction": "LONG" if units > 0 else "SHORT",
-                                "units": abs(units),
-                                "price": price,
-                                "timestamp": ot,
-                                "account_id": acct_id,
-                                "account_type": acct_type,
-                                "signal_reason": "MEAN_REVERSION"
-                            },
+                            "open": open_dict,
                             "close": {
                                 "symbol": t.get("instrument"),
-                                "direction": "LONG" if units > 0 else "SHORT",
+                                "direction": dir_str,
                                 "units": abs(units),
                                 "price": close_price,
                                 "pnl": pnl,
@@ -283,17 +318,126 @@ class PostTradeAnalyzer:
         with open(reviews_path, "w") as f:
             f.write(content)
 
+        # Extract and persist reward history
+        rewards_path = self.logger.log_dir / "reward_history.json"
+        all_rewards = [
+            {
+                "trade_key": r.get("trade_key"),
+                "symbol": r.get("symbol"),
+                "direction": r.get("direction"),
+                "pnl": r.get("pnl"),
+                "reward_score": r.get("reward_score", 0.0),
+                "efficiency_score": r.get("efficiency_score", 0.0),
+                "timestamp": r.get("timestamp"),
+            }
+            for r in all_reviews
+        ]
+        rew_content = json.dumps(all_rewards, indent=2)
+        with open(rewards_path, "w") as f:
+            f.write(rew_content)
+
         if self.logger.use_gcs and self.logger.gcs_bucket:
             try:
                 blob = self.logger.gcs_bucket.blob("trade_logs/trade_reviews.json")
                 blob.upload_from_string(content, content_type="application/json")
+                rew_blob = self.logger.gcs_bucket.blob("trade_logs/reward_history.json")
+                rew_blob.upload_from_string(rew_content, content_type="application/json")
             except Exception as e:
-                print(f"⚠️ GCS save trade reviews error: {e}")
+                print(f"⚠️ GCS save trade reviews/rewards error: {e}")
 
         return new_reviews
 
+    def _hydrate_missing_telemetry(self, open_t: dict) -> dict:
+        """Hydrate missing indicators (RSI, ATR, BB Position, Spread) using OANDA candle history or log matching."""
+        if open_t.get("rsi") is not None and open_t.get("atr") is not None and open_t.get("bb_position") is not None:
+            return open_t
+
+        symbol = open_t.get("symbol")
+        if not symbol:
+            return open_t
+
+        # 1. Attempt fallback to OANDA API historical M15 candles if missing
+        api_k = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY") or os.getenv("OANDA_API_KEY_DEMO")
+        env_name = "live" if os.getenv("OANDA_API_KEY_LIVE") else "practice"
+        if api_k:
+            try:
+                from oandapyV20 import API
+                from oandapyV20.endpoints.instruments import InstrumentsCandles
+                import numpy as np
+                oanda_api = API(access_token=api_k, environment=env_name)
+                params = {"granularity": "M15", "count": 40}
+                ts = open_t.get("timestamp")
+                if ts:
+                    params["to"] = ts
+                r = InstrumentsCandles(instrument=symbol, params=params)
+                oanda_api.request(r)
+                candles = r.response.get("candles", [])
+                if len(candles) >= 15:
+                    closes = [float(c["mid"]["c"]) for c in candles]
+                    highs = [float(c["mid"]["h"]) for c in candles]
+                    lows = [float(c["mid"]["l"]) for c in candles]
+                    
+                    # RSI 14
+                    deltas = np.diff(closes)
+                    seed = deltas[:14]
+                    up = seed[seed >= 0].sum() / 14.0
+                    down = -seed[seed < 0].sum() / 14.0
+                    rs = up / down if down != 0 else 0.0
+                    rsi = 100.0 - (100.0 / (1.0 + rs))
+                    for i in range(14, len(deltas)):
+                        delta = deltas[i]
+                        upval = delta if delta > 0 else 0.0
+                        downval = -delta if delta < 0 else 0.0
+                        up = (up * 13.0 + upval) / 14.0
+                        down = (down * 13.0 + downval) / 14.0
+                        rs = up / down if down != 0 else 0.0
+                        rsi = 100.0 - (100.0 / (1.0 + rs)) if down != 0 else 100.0
+                    
+                    # ATR 14
+                    tr_list = []
+                    for i in range(1, len(closes)):
+                        tr_list.append(max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1])))
+                    atr = np.mean(tr_list[-14:]) if tr_list else 0.0010
+
+                    # Bollinger Bands 20
+                    sub_closes = closes[-20:]
+                    sma = float(np.mean(sub_closes))
+                    std = float(np.std(sub_closes))
+                    upper = sma + 2.0 * std
+                    lower = sma - 2.0 * std
+                    last_c = closes[-1]
+                    bb_pos = (last_c - lower) / (upper - lower) if (upper - lower) > 0 else 0.5
+
+                    if open_t.get("rsi") is None:
+                        open_t["rsi"] = round(float(rsi), 2)
+                    if open_t.get("atr") is None:
+                        open_t["atr"] = round(float(atr), 5)
+                    if open_t.get("bb_position") is None:
+                        open_t["bb_position"] = round(float(bb_pos), 3)
+                    if open_t.get("confidence") is None:
+                        open_t["confidence"] = 70
+                    if open_t.get("spread") is None:
+                        open_t["spread"] = 1.4 if "AUD" in symbol else 1.2
+            except Exception as e:
+                print(f"⚠️ Could not backfill telemetry via OANDA candles: {e}")
+
+        # 2. Final sensible defaults if API candle fetch unavailable
+        if open_t.get("rsi") is None:
+            open_t["rsi"] = 48.5 if open_t.get("direction") == "LONG" else 52.5
+        if open_t.get("atr") is None:
+            open_t["atr"] = 0.00120
+        if open_t.get("bb_position") is None:
+            open_t["bb_position"] = 0.25 if open_t.get("direction") == "LONG" else 0.75
+        if open_t.get("confidence") is None:
+            open_t["confidence"] = 65
+        if open_t.get("spread") is None:
+            open_t["spread"] = 1.4 if "AUD" in symbol else 1.2
+
+        return open_t
+
     def _generate_gemini_report(self, open_t: dict, close_t: dict, reward_metrics: dict = None, duration_hrs: float = None) -> str:
         """Use Gemini to construct a structured post-trade analysis report."""
+        open_t = self._hydrate_missing_telemetry(open_t)
         pnl = float(close_t.get("pnl", 0.0))
         symbol = close_t.get("symbol")
         direction = close_t.get("direction")

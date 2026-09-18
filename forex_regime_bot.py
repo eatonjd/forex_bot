@@ -207,25 +207,29 @@ class ForexRegimeBot:
         # Simulated balance for position sizing
         self.simulated_balance = 5000.0
 
-        # Risk management — reduced to 1.0% while proving R:R enforcement is profitable.
-        # At ~$304 balance: risk ~$3/trade. Raise back to 1.5% once bot shows positive edge.
-        self.risk_percent = 0.01  # 1.0% per trade
-        self.max_margin_utilization = 0.50  # Capped at 50% of NAV in margin usage
-        self.max_daily_loss = -30.0  # Scaled down from -$150 for ~$304 balance
+        # Risk management — calibrated for ~$3,170 live balance
+        self.risk_percent = 0.0075  # 0.75% per trade (~$23 risk on $3,170 NAV)
+        self.max_position_units = 20000  # Hard cap on units to prevent excessive leverage
+        self.max_margin_utilization = 0.35  # Capped at 35% of NAV in margin usage
+        self.max_daily_loss = -60.0  # Daily loss circuit breaker scaled to ~1.9% of NAV
         self.daily_pnl = 0.0
+        self.consecutive_losses = 0
+        self.instrument_cooldowns = {}  # {instrument: (close_time, remaining_min, last_pl)}
+        self.loss_cooldown_hours = 2.0  # Mandatory 2-hour cooldown per pair after a loss
+        self.max_consecutive_losses = 3  # Circuit breaker: pause after 3 consecutive losses
 
         # MR-specific settings
         self.mr_stop_loss_pips = 20
         self.mr_take_profit_pips = 20    # Fixed TP target for MR trades (fallback; min_rr_multiple takes effect)
         self.mr_trailing_trigger = 20.0  # Activate trailing at $20
         self.mr_trailing_amount = 10.0   # Trail by $10
-        self.mr_max_holding_hours = 6    # Shortened to 6h to eliminate stagnant capital tie-up (Gemini AI recommendation)
+        self.mr_max_holding_hours = 3.5  # Compressed to 3.5h to eliminate stagnant capital tie-up (Gemini AI recommendation)
 
         # Breakout-specific settings
         self.vol_stop_atr_mult = 1.5
         self.vol_trailing_atr_mult = 2.0
         self.vol_trailing_trigger = 25.0
-        self.vol_max_holding_hours = 8
+        self.vol_max_holding_hours = 4.0  # Compressed to 4.0h to prevent trailing consolidation churn
 
         # Minimum Risk:Reward enforcement — applied to ALL trade types at entry.
         # If take_profit_dist is not set by a strategy, it is forced to stop_dist * min_rr_multiple.
@@ -238,7 +242,9 @@ class ForexRegimeBot:
             self._instrument_state[inst] = {
                 "entry_time": None,
                 "trailing_active": False,
+                "impulse_trail_active": False,
                 "peak_profit": 0,
+                "peak_price": None,
                 "stop_distance": 0,
                 "trail_distance": 0,
                 "entry_regime": None,  # Which regime was active at entry
@@ -385,12 +391,122 @@ class ForexRegimeBot:
                         except Exception as ot_err:
                             print(f"   ⚠️ Could not fetch open trade time for {inst}: {ot_err}")
                 else:
+                    if self._instrument_state[inst]["entry_time"] is not None:
+                        # Position was open previously and closed externally (e.g. via OANDA Stop Loss or Take Profit)
+                        print(f"🔔 [{inst}] Detected external position close (Stop Loss or Take Profit executed).")
+                        self._handle_external_close(inst)
                     self._instrument_state[inst]["entry_time"] = None
                     self._instrument_state[inst]["trailing_active"] = False
                     self._instrument_state[inst]["peak_profit"] = 0
                     print(f"📍 [{inst}] Flat")
             except Exception as e:
                 print(f"⚠️ [{inst}] Sync error: {e}")
+
+    def _sync_closed_trades_and_pnl(self):
+        """Reconcile realized PnL today, consecutive losses, and instrument loss cooldowns directly from OANDA."""
+        if not self.api or not self.account_id:
+            return
+
+        try:
+            from oandapyV20.endpoints.trades import TradesList
+            req = TradesList(accountID=self.account_id, params={"state": "CLOSED", "count": 50})
+            self.api.request(req)
+            closed_trades = req.response.get("trades", [])
+
+            et = pytz.timezone("America/New_York")
+            now_et = datetime.now(et)
+            start_of_day_utc = now_et.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+
+            today_pnl = 0.0
+            for t in closed_trades:
+                ct_str = t.get("closeTime")
+                if ct_str and ct_str >= start_of_day_utc:
+                    today_pnl += float(t.get("realizedPL", 0))
+
+            self.daily_pnl = round(today_pnl, 2)
+
+            # Check instrument cooldowns (e.g. 2 hours after a losing trade)
+            now_utc = datetime.now(pytz.utc)
+            cooldown_seconds = self.loss_cooldown_hours * 3600
+            self.instrument_cooldowns = {}
+
+            for inst in self.instruments:
+                inst_trades = [t for t in closed_trades if t.get("instrument") == inst]
+                if inst_trades:
+                    latest = inst_trades[0]
+                    ct_str = latest.get("closeTime")
+                    if ct_str:
+                        ct = datetime.fromisoformat(ct_str.replace("Z", "+00:00"))
+                        elapsed = (now_utc - ct).total_seconds()
+                        pl = float(latest.get("realizedPL", 0))
+                        if pl < 0 and elapsed < cooldown_seconds:
+                            rem_min = (cooldown_seconds - elapsed) / 60
+                            self.instrument_cooldowns[inst] = (ct, rem_min, pl)
+
+            # Consecutive losses across recent trades
+            consec_losses = 0
+            for t in closed_trades:
+                if float(t.get("realizedPL", 0)) < 0:
+                    consec_losses += 1
+                else:
+                    break
+            self.consecutive_losses = consec_losses
+
+            print(f"📊 [OANDA Ledger Sync] Today P/L: ${self.daily_pnl:+.2f} | Consecutive Losses: {self.consecutive_losses}", flush=True)
+            for inst, (_, rem_m, pl) in self.instrument_cooldowns.items():
+                print(f"⏳ [{inst}] Post-loss cooldown active: {rem_m:.1f}m remaining (Last trade P/L: ${pl:.2f})", flush=True)
+
+        except Exception as e:
+            print(f"⚠️ Failed to sync closed trades from OANDA: {e}", flush=True)
+
+    def _handle_external_close(self, instrument: str):
+        """Handle position that closed externally on OANDA (e.g. SL or TP order filled)."""
+        try:
+            from oandapyV20.endpoints.trades import TradesList
+            req = TradesList(accountID=self.account_id, params={"state": "CLOSED", "count": 10})
+            self.api.request(req)
+            inst_trades = [t for t in req.response.get("trades", []) if t.get("instrument") == instrument]
+            if not inst_trades:
+                return
+            latest = inst_trades[0]
+            pl = float(latest.get("realizedPL", 0))
+            close_price = float(latest.get("averageClosePrice", 0))
+            units = abs(int(float(latest.get("initialUnits", 0))))
+            direction = "LONG" if float(latest.get("initialUnits", 0)) > 0 else "SHORT"
+            sl_state = latest.get("stopLossOrder", {}).get("state")
+            tp_state = latest.get("takeProfitOrder", {}).get("state")
+            reason = "Stop Loss" if sl_state == "FILLED" else ("Take Profit" if tp_state == "FILLED" else "Broker Closed")
+
+            print(f"📝 Logging external close for [{instrument}]: {direction} {units}u @ {close_price} -> P/L: ${pl:.2f} ({reason})", flush=True)
+
+            logger = TradeLogger()
+            logger.log_forex_trade(
+                action="CLOSE",
+                direction=direction,
+                symbol=instrument,
+                units=units,
+                price=close_price,
+                pnl=pl,
+                account_type=self.mode,
+                account_id=self.account_id,
+                signal_data={"exit_reason": reason},
+                market_data={"close_price": close_price},
+            )
+
+            # Trigger automatic post-trade AI commentary & analysis asynchronously
+            def _run_analyzer():
+                try:
+                    from utils.post_trade_analyzer import PostTradeAnalyzer
+                    if self._analyzer_instance is None:
+                        self._analyzer_instance = PostTradeAnalyzer()
+                    self._analyzer_instance.analyze_new_trades(days=1)
+                except Exception as pta_err:
+                    print(f"⚠️ Post-trade analysis error on external close: {pta_err}")
+
+            threading.Thread(target=_run_analyzer, daemon=True).start()
+
+        except Exception as e:
+            print(f"⚠️ Error handling external close for {instrument}: {e}")
 
     def send_bot_notification(self, msg: str, title: str = None):
         """Send notification enriched with prominent LIVE / DEMO badge and account ID."""
@@ -564,14 +680,15 @@ class ForexRegimeBot:
 
         max_margin = current_balance * self.max_margin_utilization
         max_units = int(max_margin / (margin_rate * unit_price_usd))
+        max_units = min(max_units, self.max_position_units)
 
         if size > max_units:
-            print(f"⚠️ [{instrument}] Position size restricted by margin cap: {size}u -> {max_units}u (Max margin: ${max_margin:.2f})")
+            print(f"⚠️ [{instrument}] Position size restricted by cap: {size}u -> {max_units}u (Max margin: ${max_margin:.2f})")
             size = max_units
 
         if instrument == "XAU_USD":
             return max(1, min(size, 100))
-        return max(1000, min(size, 100000))
+        return max(1000, min(size, self.max_position_units))
 
     # ─── Order Execution ─────────────────────────────────────────
 
@@ -748,7 +865,9 @@ class ForexRegimeBot:
             istate = self._instrument_state[instrument]
             istate["entry_time"] = None
             istate["trailing_active"] = False
+            istate["impulse_trail_active"] = False
             istate["peak_profit"] = 0
+            istate["peak_price"] = None
             istate["entry_regime"] = None
             self.save_state()
             return True, pnl
@@ -783,7 +902,9 @@ class ForexRegimeBot:
             self.last_reset_date = today
             for istate in self._instrument_state.values():
                 istate["peak_profit"] = 0
+                istate["peak_price"] = None
                 istate["trailing_active"] = False
+                istate["impulse_trail_active"] = False
             self.save_state()
 
         # Weekend protection
@@ -797,6 +918,9 @@ class ForexRegimeBot:
                     self.close_position(inst)
             return
 
+        # Reconcile realized PnL today, consecutive losses, and instrument loss cooldowns directly from OANDA
+        self._sync_closed_trades_and_pnl()
+
         # Daily loss limit
         total_upl = 0
         for inst in self.instruments:
@@ -804,7 +928,7 @@ class ForexRegimeBot:
             if pi and pi[0] != 0:
                 total_upl += pi[3]
         if self.daily_pnl + total_upl <= self.max_daily_loss:
-            print(f"🛑 Daily loss limit: ${self.daily_pnl + total_upl:+.2f}")
+            print(f"🛑 Daily loss limit reached: ${self.daily_pnl + total_upl:+.2f} <= ${self.max_daily_loss:.2f}. Halting trading for today.")
             for inst in self.instruments:
                 pi = self.get_current_position(inst)
                 if pi and pi[0] != 0:
@@ -906,29 +1030,77 @@ class ForexRegimeBot:
                 f"Via: {entry_regime}{trail_str}"
             )
 
+            # Early stagnation exit (Gemini post-trade review recommendation)
+            # If position has been held >= 2.0h without achieving at least $2.00 profit, close to avoid capital lockup
+            if hold_h >= 2.0 and not istate.get("trailing_active", False):
+                if upl < 2.0:
+                    print(f"⏱️ [{instrument}] STAGNATION EXIT after {hold_h:.1f}h (floating PnL: ${upl:+.2f})")
+                    self.close_position(instrument, reason="Stagnation timeout (2h in low-momentum consolidation)")
+                    return
+
             # Time stop
             if hold_h >= max_hold:
                 print(f"⏱️ [{instrument}] TIME STOP after {hold_h:.1f}h")
                 self.close_position(instrument, reason="Time stop")
                 return
 
-            # Trailing profit
+            # ─── Trailing Profit & Acceleration Trailing Rule ───
+            cfg = self.instruments.get(instrument, {})
+            pip_size = cfg.get("pip_size", 0.0001)
+            pips_gain = ((current_price - entry_price) if pos_dir == 1 else (entry_price - current_price)) / pip_size if pip_size > 0 else 0.0
+            current_atr = getattr(regime_state, "atr", None)
+            if current_atr is None and "ATR" in df.columns:
+                try:
+                    current_atr = float(df.iloc[-1]["ATR"])
+                except Exception:
+                    current_atr = None
+
+            # Impulse acceleration rule: activate early trailing at +5.0 pips gain in < 30 min (hold_h <= 0.5) with 0.75x ATR giveback cushion
+            is_impulse_active = istate.get("impulse_trail_active", False)
+            if pips_gain >= 5.0 and hold_h <= 0.5 and not istate.get("trailing_active", False) and not is_impulse_active:
+                istate["impulse_trail_active"] = True
+                istate["peak_profit"] = max(upl, istate.get("peak_profit", 0.0))
+                istate["peak_price"] = current_price
+                print(f"⚡ [{instrument}] ACCELERATION TRAIL ACTIVATED at +{pips_gain:.1f} pips (${upl:+.2f}) in {hold_h*60:.0f}m")
+                self.send_bot_notification(f"⚡ {instrument} Impulse Trail Active (+{pips_gain:.1f}p in {hold_h*60:.0f}m, ${upl:+.2f})")
+
+            # Standard regime trailing activation
             if use_trailing and trail_trigger is not None:
-                if upl >= trail_trigger and not istate["trailing_active"]:
+                if upl >= trail_trigger and not istate.get("trailing_active", False):
                     istate["trailing_active"] = True
-                    istate["peak_profit"] = upl
+                    istate["peak_profit"] = max(upl, istate.get("peak_profit", 0.0))
+                    istate["peak_price"] = current_price
                     print(f"🎯 [{instrument}] TRAILING at ${upl:+.2f}")
                     self.send_bot_notification(f"🎯 {instrument} Trailing Active at ${upl:+.2f}")
 
-                if istate["trailing_active"] and upl > istate["peak_profit"]:
+            # Trailing stop execution (standard or impulse acceleration)
+            if istate.get("trailing_active") or istate.get("impulse_trail_active"):
+                if upl > istate.get("peak_profit", 0.0):
                     istate["peak_profit"] = upl
 
-                if istate["trailing_active"]:
+                # Update peak price for LONG / SHORT
+                if pos_dir == 1:
+                    istate["peak_price"] = max(current_price, istate.get("peak_price", current_price))
+                elif pos_dir == -1:
+                    istate["peak_price"] = min(current_price, istate.get("peak_price", current_price))
+
+                if istate.get("impulse_trail_active") and not istate.get("trailing_active"):
+                    atr_val = current_atr if (current_atr and current_atr > 0) else (10.0 * pip_size)
+                    cushion = 0.75 * atr_val
+                    peak_p = istate.get("peak_price", current_price)
+                    should_exit_impulse = (pos_dir == 1 and current_price <= (peak_p - cushion)) or \
+                                          (pos_dir == -1 and current_price >= (peak_p + cushion))
+                    if should_exit_impulse:
+                        print(f"🔒 [{instrument}] ACCELERATION TRAIL STOP at ${upl:+.2f} (0.75x ATR giveback from peak)")
+                        self.close_position(instrument, reason="Acceleration trail stop (0.75x ATR giveback)")
+                        return
+                elif istate.get("trailing_active"):
                     # Tightened giveback for Breakout trades: 15% of peak profit (min $5, max $15)
                     trail_amt = max(5.0, min(15.0, istate["peak_profit"] * 0.15))
                     if upl <= istate["peak_profit"] - trail_amt:
                         print(f"🔒 [{instrument}] TRAILING STOP ${upl:+.2f}")
                         self.close_position(instrument, reason="Trail stop")
+                        return
             # ─── Gemini In-Flight Copilot Evaluation (Requirement #2) ───
             if self.copilot and self.copilot.should_evaluate(
                 instrument=instrument,
@@ -1063,6 +1235,34 @@ class ForexRegimeBot:
                 signal = "HOLD"
                 confidence = 35
                 reason = f"Breakout skipped: ADX {adx_val:.1f} > 38.0 (late-stage exhaustion)"
+
+            # Guard against terminal exhaustion wicks & selling climaxes (Gemini post-trade review recommendation)
+            rsi_val = float(df.iloc[-1].get("RSI", 50)) if "RSI" in df.columns else 50.0
+            if signal == "SELL" and rsi_val <= 28.0:
+                print(f"   ⚠️ [{instrument}] Breakout SHORT skipped: RSI {rsi_val:.1f} <= 28.0 (terminal selling climax exhaustion trap)")
+                signal = "HOLD"
+                confidence = 30
+                reason = f"Breakout SHORT skipped: RSI {rsi_val:.1f} <= 28.0 (terminal selling climax)"
+            elif signal == "BUY" and rsi_val >= 72.0:
+                print(f"   ⚠️ [{instrument}] Breakout BUY skipped: RSI {rsi_val:.1f} >= 72.0 (terminal buying climax exhaustion trap)")
+                signal = "HOLD"
+                confidence = 30
+                reason = f"Breakout BUY skipped: RSI {rsi_val:.1f} >= 72.0 (terminal buying climax)"
+
+            # Volume & ATR impulse exhaustion: when volume is > 3.5x and candle is an extended expansion bar, avoid chasing market order on impulse wick
+            vol_ratio_preview = 1.0
+            if "Volume" in df.columns and len(df) >= 20:
+                avg_vol = df["Volume"].iloc[-20:-1].mean()
+                if avg_vol > 0:
+                    vol_ratio_preview = df["Volume"].iloc[-1] / avg_vol
+            if signal in ["BUY", "SELL"] and vol_ratio_preview >= 3.5:
+                candle_range = abs(df.iloc[-1]["High"] - df.iloc[-1]["Low"])
+                atr_val = getattr(regime_state, "atr", 0.0) or 0.0
+                if atr_val > 0 and candle_range > 1.5 * atr_val:
+                    print(f"   ⚠️ [{instrument}] Breakout skipped: Volume {vol_ratio_preview:.1f}x & Range {candle_range/atr_val:.1f}x ATR (impulse wick exhaustion risk)")
+                    signal = "HOLD"
+                    confidence = 30
+                    reason = f"Breakout skipped: Volume {vol_ratio_preview:.1f}x & Range > 1.5x ATR (exhaustion spike)"
         else:  # TRANSITIONAL or unknown
             signal = "HOLD"
             confidence = 30
@@ -1159,6 +1359,21 @@ class ForexRegimeBot:
                 if tp_pips < (spread * 4.0):
                     print(f"   ⚠️ [{instrument}] Entry skipped: TP {tp_pips:.1f}p < 4x spread ({spread:.1f}p * 4 = {spread * 4.0:.1f}p)")
                     return
+            # ─── Post-Loss Cooldown Guard ───────────────────────────────────────
+            if instrument in self.instrument_cooldowns:
+                _, rem_min, last_loss = self.instrument_cooldowns[instrument]
+                print(f"⏳ [{instrument}] Entry skipped: In post-loss cooldown for {rem_min:.1f}m (Last loss: ${last_loss:.2f})")
+                return
+
+            # ─── Consecutive Loss Circuit Breaker ────────────────────────────────
+            if self.consecutive_losses >= self.max_consecutive_losses:
+                print(f"🛑 [{instrument}] Entry skipped: {self.consecutive_losses} consecutive losses across portfolio. Halting until daily reset.")
+                return
+
+            # ─── Daily Loss Limit Guard ─────────────────────────────────────────
+            if self.daily_pnl <= self.max_daily_loss:
+                print(f"🛑 [{instrument}] Entry skipped: Daily loss limit active (${self.daily_pnl:+.2f} <= ${self.max_daily_loss:+.2f})")
+                return
 
             units = self.calculate_position_size(instrument, stop_dist, cached_balance=cached_balance)
             sl_pips = stop_dist / cfg["pip_size"]
@@ -1210,8 +1425,10 @@ class ForexRegimeBot:
             "regime_reason": regime_reason,
             "regime_map": regime_map,
             "market_open": market_open,
-            "instruments": self.instruments,
             "daily_pnl": round(self.daily_pnl, 2),
+            "consecutive_losses": self.consecutive_losses,
+            "loss_cooldowns": {k: round(v[1], 1) for k, v in self.instrument_cooldowns.items()},
+            "daily_loss_locked": (self.daily_pnl <= self.max_daily_loss),
         }
 
 
