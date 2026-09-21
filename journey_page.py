@@ -57,10 +57,17 @@ BOT_FIX_TIMELINE = [
         "impact": "Comprehensive multi-asset executive oversight with zero manual initiation",
         "icon": "📊",
     },
+    {
+        "date": "2026-09-21",
+        "title": "Daily Scoped Loss Reset & Live NAV Single Source of Truth",
+        "description": "Scoped consecutive loss circuit breakers strictly to the current trading day, and tied the 25-trade qualification scorecard directly to live OANDA account NAV ($3,173.60).",
+        "impact": "Unblocked production signal execution and reset Phase 2 qualification gates for live capital scaling",
+        "icon": "🛡️",
+    },
 ]
 
 
-def calculate_advanced_metrics(trades, start_balance=308.48):
+def calculate_advanced_metrics(trades, start_balance=3173.60):
     """Calculate advanced performance metrics for live trading"""
     if not trades:
         return {
@@ -152,55 +159,77 @@ def calculate_advanced_metrics(trades, start_balance=308.48):
     }
 
 
-def generate_journey_html(trades, start_balance=308.48, view_mode="live"):
-    """Generate enhanced live forex trading journey HTML page"""
-    total_pnl = sum(float(t.get("realizedPL", 0)) for t in trades)
-    winners = [t for t in trades if float(t.get("realizedPL", 0)) > 0]
-    losers = [t for t in trades if float(t.get("realizedPL", 0)) < 0]
+def generate_journey_html(trades, current_nav=3173.60, phase_start="2026-09-21", view_phase="active", view_mode="live", start_balance=None):
+    """Generate enhanced live forex trading journey HTML page with phase cohort qualification"""
+    # Separate active phase trades (since phase_start) from all historical trades
+    phase_trades = [t for t in trades if t.get("openTime", "")[:10] >= phase_start]
+
+    if view_phase == "active":
+        target_trades = phase_trades
+        total_pnl = sum(float(t.get("realizedPL", 0)) for t in target_trades)
+        effective_start = current_nav - total_pnl if start_balance is None else start_balance
+        phase_badge = f"Active Qualification Cohort ({phase_start} – Present)"
+    else:
+        target_trades = trades
+        total_pnl = sum(float(t.get("realizedPL", 0)) for t in target_trades)
+        effective_start = current_nav - total_pnl if start_balance is None else start_balance
+        phase_badge = f"All-Time History Archive ({len(trades)} Trades)"
+
+    winners = [t for t in target_trades if float(t.get("realizedPL", 0)) > 0]
+    losers = [t for t in target_trades if float(t.get("realizedPL", 0)) < 0]
     win_pnl = sum(float(t.get("realizedPL", 0)) for t in winners)
     loss_pnl = sum(float(t.get("realizedPL", 0)) for t in losers)
-    win_rate = (len(winners) / len(trades) * 100) if trades else 0
+    win_rate = (len(winners) / len(target_trades) * 100) if target_trades else 0
     profit_factor = abs(win_pnl / loss_pnl) if loss_pnl else (1.0 if not losers and winners else 0)
 
-    metrics = calculate_advanced_metrics(trades, start_balance)
+    metrics = calculate_advanced_metrics(target_trades, effective_start)
 
     # Build equity curve data points
-    sorted_trades = sorted(trades, key=lambda t: t.get("openTime", ""))
-    equity = start_balance
+    sorted_trades = sorted(target_trades, key=lambda t: t.get("openTime", ""))
+    equity = effective_start
     equity_points = []
-    for t in sorted_trades:
-        date_str = t.get("openTime", "")[:10]
-        pnl = float(t.get("realizedPL", 0))
-        equity += pnl
-        pair = t.get("instrument", "USD_CAD")
+    if not sorted_trades:
         equity_points.append({
-            "x": date_str,
-            "y": round(equity, 2),
-            "pnl": round(pnl, 2),
-            "pair": pair
+            "x": phase_start,
+            "y": round(current_nav, 2),
+            "pnl": 0.0,
+            "pair": "BASELINE"
         })
+    else:
+        for t in sorted_trades:
+            date_str = t.get("openTime", "")[:10]
+            pnl = float(t.get("realizedPL", 0))
+            equity += pnl
+            pair = t.get("instrument", "USD_CAD")
+            equity_points.append({
+                "x": date_str,
+                "y": round(equity, 2),
+                "pnl": round(pnl, 2),
+                "pair": pair
+            })
 
     # Performance breakdown by Pair
     pairs = ["USD_CAD", "EUR_USD", "AUD_USD"]
     pair_cards_html = ""
     for p in pairs:
-        p_trades = [t for t in trades if t.get("instrument") == p]
+        p_trades = [t for t in target_trades if t.get("instrument") == p]
         p_pnl = sum(float(t.get("realizedPL", 0)) for t in p_trades)
         p_wins = [t for t in p_trades if float(t.get("realizedPL", 0)) > 0]
         p_wr = (len(p_wins) / len(p_trades) * 100) if p_trades else 0
         p_color = "#4caf50" if p_pnl >= 0 else "#f44336"
+        wr_text = f"{p_wr:.0f}% WR" if p_trades else "No Trades"
         pair_cards_html += f"""
         <div class="stat-card" style="border-left: 4px solid {p_color};">
             <div class="stat-value">{p}</div>
             <div class="stat-label">{len(p_trades)} Trades</div>
             <div style="font-size:0.85rem; margin-top:6px;">
-                <span class="{'positive' if p_pnl >= 0 else 'negative'}">${p_pnl:+,.2f}</span> | {p_wr:.0f}% WR
+                <span class="{'positive' if p_pnl >= 0 else 'negative'}">${p_pnl:+,.2f}</span> | {wr_text}
             </div>
         </div>"""
 
     # Build Trade rows
     trade_rows_list = []
-    running_balance = start_balance
+    running_balance = effective_start
     for t in sorted_trades:
         open_time_full = t.get("openTime", "")
         close_time_full = t.get("closeTime", "")
@@ -246,8 +275,19 @@ def generate_journey_html(trades, start_balance=308.48, view_mode="live"):
             <td>{hold_str}</td>
         </tr>""")
 
-    trade_rows_list.reverse()
-    trade_rows = "".join(trade_rows_list)
+    if not sorted_trades:
+        trade_rows = f"""
+        <tr>
+            <td colspan="9" style="text-align:center; padding:32px 15px; color:#888;">
+                <div style="font-size:1.15rem; font-weight:600; color:#4ecdc4; margin-bottom:8px;">🚀 Active Qualification Phase ({phase_start})</div>
+                <div>No closed trades in this cohort yet. Bot is actively scanning M15 candles for breakout entries.</div>
+                <div style="margin-top:12px;"><a href="?phase=all" style="color:#4ecdc4; font-size:0.85rem; font-weight:600; text-decoration:underline;">View {len(trades)} Historical Closed Trades in All-Time Archive &rarr;</a></div>
+            </td>
+        </tr>
+        """
+    else:
+        trade_rows_list.reverse()
+        trade_rows = "".join(trade_rows_list)
 
     # Build Timeline HTML
     fix_timeline_html = ""
@@ -264,7 +304,7 @@ def generate_journey_html(trades, start_balance=308.48, view_mode="live"):
         </div>"""
 
     # Qualification Gate Calculations
-    live_trades_count = len(trades)
+    live_trades_count = len(target_trades)
     max_dd_pct = metrics.get("max_drawdown_pct", 0)
 
     html = f"""<!DOCTYPE html>
@@ -637,6 +677,14 @@ def generate_journey_html(trades, start_balance=308.48, view_mode="live"):
         <div class="header">
             <h1>📈 Multi-Regime Forex Trading Journey</h1>
             <p class="subtitle">Primary Live OANDA CFD (<code>001-001-20048243-002</code>) &bull; Active Roster: USD_CAD, EUR_USD, AUD_USD</p>
+            <div style="display:flex; justify-content:center; gap:12px; margin: 16px 0 6px 0; flex-wrap:wrap;">
+                <a href="?phase=active" style="padding: 8px 18px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; text-decoration: none; border: 1px solid {'#4ecdc4' if view_phase == 'active' else 'rgba(255,255,255,0.15)'}; background: {'rgba(78,205,196,0.18)' if view_phase == 'active' else 'rgba(255,255,255,0.03)'}; color: {'#4ecdc4' if view_phase == 'active' else '#aaa'};">
+                    🎯 Active Qualification Phase ({phase_start} – Present: {len(phase_trades)} Trades)
+                </a>
+                <a href="?phase=all" style="padding: 8px 18px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; text-decoration: none; border: 1px solid {'#4ecdc4' if view_phase == 'all' else 'rgba(255,255,255,0.15)'}; background: {'rgba(78,205,196,0.18)' if view_phase == 'all' else 'rgba(255,255,255,0.03)'}; color: {'#4ecdc4' if view_phase == 'all' else '#aaa'};">
+                    📜 All-Time History Archive ({len(trades)} Trades)
+                </a>
+            </div>
         </div>
 
         <!-- Primary Stats -->
@@ -646,15 +694,15 @@ def generate_journey_html(trades, start_balance=308.48, view_mode="live"):
                 <div class="stat-label">Total P/L</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{len(trades)}</div>
+                <div class="stat-value">{len(target_trades)}</div>
                 <div class="stat-label">Total Trades</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{win_rate:.1f}%</div>
+                <div class="stat-value">{f'{win_rate:.1f}%' if len(target_trades) > 0 else '--'}</div>
                 <div class="stat-label">Win Rate</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{profit_factor:.2f}</div>
+                <div class="stat-value">{f'{profit_factor:.2f}' if len(target_trades) > 0 else '--'}</div>
                 <div class="stat-label">Profit Factor</div>
             </div>
             <div class="stat-card">
@@ -662,7 +710,7 @@ def generate_journey_html(trades, start_balance=308.48, view_mode="live"):
                 <div class="stat-label">Sharpe Ratio</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value negative">-{metrics.get("max_drawdown_pct", 0):.1f}%</div>
+                <div class="stat-value {'positive' if max_dd_pct <= 5.0 else 'negative'}">-{max_dd_pct:.1f}%</div>
                 <div class="stat-label">Max Drawdown</div>
             </div>
             <div class="stat-card">
@@ -684,9 +732,9 @@ def generate_journey_html(trades, start_balance=308.48, view_mode="live"):
         <div class="gate-card">
             <div class="gate-header">
                 <div>
-                    <div style="font-size:1rem; font-weight:700; color:#fff;">Live Baseline: $308.48 &bull; Next Capital Injection: +$700.00 &rarr; $1,000.00 Target</div>
+                    <div style="font-size:1rem; font-weight:700; color:#fff;">Live Account NAV: ${current_nav:,.2f} &bull; Phase Starting Capital: ${effective_start:,.2f}</div>
                     <div style="font-size:0.8rem; color:#aaa; margin-top:2px;">
-                        Primary OANDA Live CFD Account (<code>001-001-20048243-002</code>) &bull; 25 live trades required before deploying additional funds.
+                        Primary OANDA Live CFD Account (<code>001-001-20048243-002</code>) &bull; Cohort: <b>{phase_badge}</b> &bull; 25 live trades required before deploying additional funds.
                     </div>
                 </div>
                 <div class="gate-badge">
@@ -706,20 +754,20 @@ def generate_journey_html(trades, start_balance=308.48, view_mode="live"):
 
                 <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
                     <div style="font-size:0.72rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 2: WIN RATE (&ge; 55%)</div>
-                    <div style="font-size:1.3rem; font-weight:bold; color:{'#4caf50' if win_rate >= 55 else '#ffc107' if win_rate >= 45 else '#f44336'}; margin: 3px 0;">{win_rate:.1f}%</div>
-                    <div style="font-size:0.72rem; color:#aaa;">Status: {'✅ PASS' if win_rate >= 55 else '🟡 TRACKING'}</div>
+                    <div style="font-size:1.3rem; font-weight:bold; color:{'#4caf50' if win_rate >= 55 and live_trades_count > 0 else '#aaa' if live_trades_count == 0 else '#f44336'}; margin: 3px 0;">{f'{win_rate:.1f}%' if live_trades_count > 0 else '--'}</div>
+                    <div style="font-size:0.72rem; color:#aaa;">Status: {'✅ PASS' if win_rate >= 55 and live_trades_count > 0 else '🟡 PENDING TRADES' if live_trades_count == 0 else '🟡 TRACKING'}</div>
                 </div>
 
                 <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
                     <div style="font-size:0.72rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 3: PROFIT FACTOR (&ge; 1.50)</div>
-                    <div style="font-size:1.3rem; font-weight:bold; color:#4ecdc4; margin: 3px 0;">{profit_factor:.2f}</div>
-                    <div style="font-size:0.72rem; color:#aaa;">Status: {'✅ PASS' if profit_factor >= 1.50 else '🟡 TRACKING'}</div>
+                    <div style="font-size:1.3rem; font-weight:bold; color:#4ecdc4; margin: 3px 0;">{f'{profit_factor:.2f}' if live_trades_count > 0 else '--'}</div>
+                    <div style="font-size:0.72rem; color:#aaa;">Status: {'✅ PASS' if profit_factor >= 1.50 and live_trades_count > 0 else '🟡 PENDING TRADES' if live_trades_count == 0 else '🟡 TRACKING'}</div>
                 </div>
 
                 <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
                     <div style="font-size:0.72rem; color:#888; text-transform:uppercase; font-weight:600;">GATE 4: MAX DRAWDOWN (&le; 5%)</div>
-                    <div style="font-size:1.3rem; font-weight:bold; color:{'#4caf50' if max_dd_pct <= 5 else '#f44336'}; margin: 3px 0;">{max_dd_pct:.1f}%</div>
-                    <div style="font-size:0.72rem; color:#aaa;">Status: {'✅ SAFE' if max_dd_pct <= 5 else '❌ BREACHED'}</div>
+                    <div style="font-size:1.3rem; font-weight:bold; color:{'#4caf50' if max_dd_pct <= 5.0 else '#f44336'}; margin: 3px 0;">{max_dd_pct:.1f}%</div>
+                    <div style="font-size:0.72rem; color:#aaa;">Status: {'✅ SAFE' if max_dd_pct <= 5.0 else '❌ BREACHED'}</div>
                 </div>
 
                 <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
@@ -825,7 +873,7 @@ def generate_journey_html(trades, start_balance=308.48, view_mode="live"):
         </div>
 
         <div class="footer">
-            <p>Live Primary OANDA CFD Account (<code>001-001-20048243-002</code>) &bull; Starting Baseline: $308.48</p>
+            <p>Live Primary OANDA CFD Account (<code>001-001-20048243-002</code>) &bull; Live Account NAV: ${current_nav:,.2f} &bull; Phase Starting Capital: ${effective_start:,.2f}</p>
             <p>Strategy: Multi-Pair Mean Reversion & Impulse Scalping &bull; Serverless Cloud Run</p>
         </div>
     </div>

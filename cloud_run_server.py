@@ -698,24 +698,43 @@ def journey():
     """Enhanced public trading journey page for Primary Live OANDA CFD Account (001-001-20048243-002)"""
     from oandapyV20 import API
     from oandapyV20.endpoints.trades import TradesList
+    from oandapyV20.endpoints.accounts import AccountSummary
     from journey_page import generate_journey_html
 
     live_key = os.getenv("OANDA_API_KEY_LIVE") or os.getenv("OANDA_API_KEY")
     live_id = os.getenv("OANDA_ACCOUNT_ID_LIVE", "001-001-20048243-002")
-    start_balance = 308.48
     trades = []
+    live_nav = 3173.60
 
     if live_key and live_id:
         try:
             api = API(access_token=live_key, environment="live")
+            # Fetch live account balance / NAV directly from OANDA ledger
+            try:
+                acc_r = AccountSummary(accountID=live_id)
+                api.request(acc_r)
+                acc_info = acc_r.response.get("account", {})
+                live_nav = float(acc_info.get("NAV") or acc_info.get("balance") or 3173.60)
+            except Exception as e:
+                print(f"Journey live NAV fetch error: {e}", flush=True)
+
             r = TradesList(accountID=live_id, params={"state": "ALL", "count": 500})
             api.request(r)
             trades = [t for t in r.response.get("trades", []) if t.get("state") == "CLOSED"]
         except Exception as e:
             print(f"Journey live fetch error: {e}", flush=True)
 
+    view_phase = request.args.get("phase", "active")
+    phase_start = os.getenv("JOURNEY_PHASE_START", "2026-09-21")
+
     # Generate enhanced HTML from journey_page module
-    html = generate_journey_html(trades, start_balance=start_balance, view_mode="live")
+    html = generate_journey_html(
+        trades=trades,
+        current_nav=live_nav,
+        phase_start=phase_start,
+        view_phase=view_phase,
+        view_mode="live"
+    )
     return html
 
 
