@@ -49,6 +49,7 @@ def init_bot():
             from forex_regime_bot import ForexRegimeBot
             print("🏗️  Instantiating Forex Regime Bot...", flush=True)
             bot = ForexRegimeBot(mode=os.getenv("BOT_MODE", "paper"))
+            bot_status["initialization"]["started"] = True
             bot_status["initialization"]["oanda_connected"] = True
             bot_status["initialization"]["model_loaded"] = True
             bot_status["initialization"]["position_manager_ready"] = True

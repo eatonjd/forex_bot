@@ -443,13 +443,15 @@ class ForexRegimeBot:
                             rem_min = (cooldown_seconds - elapsed) / 60
                             self.instrument_cooldowns[inst] = (ct, rem_min, pl)
 
-            # Consecutive losses across recent trades
+            # Consecutive losses across recent trades closed today
             consec_losses = 0
             for t in closed_trades:
-                if float(t.get("realizedPL", 0)) < 0:
-                    consec_losses += 1
-                else:
-                    break
+                ct_str = t.get("closeTime")
+                if ct_str and ct_str >= start_of_day_utc:
+                    if float(t.get("realizedPL", 0)) < 0:
+                        consec_losses += 1
+                    else:
+                        break
             self.consecutive_losses = consec_losses
 
             print(f"📊 [OANDA Ledger Sync] Today P/L: ${self.daily_pnl:+.2f} | Consecutive Losses: {self.consecutive_losses}", flush=True)
