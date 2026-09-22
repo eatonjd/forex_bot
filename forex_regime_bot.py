@@ -1047,7 +1047,7 @@ class ForexRegimeBot:
                 return
 
             # ─── Trailing Profit & Acceleration Trailing Rule ───
-            cfg = self.instruments.get(instrument, {})
+            cfg = self.INSTRUMENT_CONFIG.get(instrument, {})
             pip_size = cfg.get("pip_size", 0.0001)
             pips_gain = ((current_price - entry_price) if pos_dir == 1 else (entry_price - current_price)) / pip_size if pip_size > 0 else 0.0
             current_atr = getattr(regime_state, "atr", None)
