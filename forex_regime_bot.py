@@ -165,7 +165,7 @@ class ForexRegimeBot:
         self.api = API(access_token=self.api_key, environment=self.environment)
 
         # Instruments — dynamically load optimized roster if available
-        self.instruments = ["USD_JPY", "USD_CAD", "EUR_USD"]
+        self.instruments = ["USD_CAD", "EUR_USD"]
         try:
             if os.path.exists("active_instruments.json"):
                 with open("active_instruments.json", "r") as f:
@@ -226,10 +226,11 @@ class ForexRegimeBot:
         self.mr_max_holding_hours = 3.5  # Compressed to 3.5h to eliminate stagnant capital tie-up (Gemini AI recommendation)
 
         # Breakout-specific settings
-        self.vol_stop_atr_mult = 1.5
+        self.vol_stop_atr_mult = 2.0       # Expanded to 2.0x ATR to eliminate noise whip-saws (Gemini AI recommendation)
         self.vol_trailing_atr_mult = 2.0
         self.vol_trailing_trigger = 25.0
         self.vol_max_holding_hours = 4.0  # Compressed to 4.0h to prevent trailing consolidation churn
+        self.min_stop_loss_pips = 12.0     # Minimum 12-pip SL floor to eliminate microscopic stops in low volatility
 
         # Minimum Risk:Reward enforcement — applied to ALL trade types at entry.
         # If take_profit_dist is not set by a strategy, it is forced to stop_dist * min_rr_multiple.
@@ -1185,20 +1186,12 @@ class ForexRegimeBot:
             confidence = 70
             reason = "Volatility Squeeze Compression Pause (ATR <= 0.75x)"
         elif active_regime == "TREND_FOLLOWING":
-            # Smooth directional trend: ride SMA direction
-            sma_dir = regime_state.sma_direction
-            if sma_dir == "BULLISH":
-                signal = "BUY"
-                confidence = 75
-                reason = "Trend Following (Bullish SMA alignment)"
-            elif sma_dir == "BEARISH":
-                signal = "SELL"
-                confidence = 75
-                reason = "Trend Following (Bearish SMA alignment)"
-            else:
-                signal = "HOLD"
-                confidence = 50
-                reason = "Trend Following (Neutral SMA)"
+            # Safe Mode: Eliminate blind SMA entries during trending chop (Gemini AI Audit Recommendation).
+            # Avoids buying trend tops or selling trend bottoms. Directional trades are only taken on confirmed
+            # BREAKOUT expansion or deep MEAN_REVERSION exhaustion bounces.
+            signal = "HOLD"
+            confidence = 40
+            reason = f"Trend Following ({regime_state.sma_direction} SMA) — awaiting Breakout expansion or deep pullback"
         elif active_regime == "MEAN_REVERSION":
             signal_data = self.mr_strategy.get_signal(df, idx)
             signal = signal_data["signal"]
@@ -1328,10 +1321,15 @@ class ForexRegimeBot:
                     stop_dist = self.mr_stop_loss_pips * cfg["pip_size"]
                     take_profit_dist = None  # Will be set by min R:R enforcement below
             else:
-                # Breakout / Trend Following: ATR-based dynamic stop
+                # Breakout: ATR-based dynamic stop (2.0x ATR)
                 stop_dist = self.vol_strategy.calculate_dynamic_stop(
                     df, idx, self.vol_stop_atr_mult
                 )
+                # Enforce absolute minimum stop loss floor (12 pips) to prevent microscopic stop traps in low volatility
+                min_stop_dist = getattr(self, "min_stop_loss_pips", 12.0) * cfg["pip_size"]
+                if stop_dist < min_stop_dist:
+                    print(f"   🛡️ [{instrument}] Stop Loss adjusted to minimum floor: {stop_dist / cfg['pip_size']:.1f}p -> {self.min_stop_loss_pips:.1f}p")
+                    stop_dist = min_stop_dist
                 take_profit_dist = None  # Will be set by min R:R enforcement below
 
                 # Dynamic TP Scaling on Volume Anomalies (Volume >= 5.0x avg & ADX > 35)
@@ -1343,6 +1341,24 @@ class ForexRegimeBot:
             if stop_dist <= 0:
                 print(f"   ⚠️ [{instrument}] Bad stop distance")
                 return
+
+            # ─── Spread-to-ATR Friction Guard (Gemini AI Audit Recommendation) ───
+            # Reject entries where broker spread consumes > 20% of M15 ATR range
+            current_atr_dist = getattr(regime_state, "atr", None)
+            if current_atr_dist is None and "ATR" in df.columns:
+                try:
+                    current_atr_dist = float(df.iloc[-1]["ATR"])
+                except Exception:
+                    current_atr_dist = None
+            if current_atr_dist is None:
+                current_atr_dist = stop_dist / self.vol_stop_atr_mult if self.vol_stop_atr_mult > 0 else stop_dist
+
+            atr_pips = current_atr_dist / cfg["pip_size"] if cfg.get("pip_size") else 0
+            if spread and spread > 0 and atr_pips > 0:
+                spread_to_atr = spread / atr_pips
+                if spread_to_atr > 0.20:
+                    print(f"   ⚠️ [{instrument}] Entry skipped: Spread/ATR {spread_to_atr:.2f} > 0.20 (Spread {spread:.1f}p consumes {spread_to_atr*100:.0f}% of {atr_pips:.1f}p ATR)")
+                    return
 
             # ─── Minimum R:R Enforcement ────────────────────────────────────────
             # If no strategy-specific TP was set (range / volume-burst already set one),

@@ -1,8 +1,8 @@
 {
     "timestamp": "2026-08-16T22:28:08.231773",
     "active_instruments": [
-        "AUD_USD",
-        "USD_CAD"
+        "USD_CAD",
+        "EUR_USD"
     ],
     "results": {
         "USD_JPY": {
